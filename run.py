@@ -8,7 +8,6 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from models.recommender import SeqRecommender
 from datamodules.datamodule import SeqDataModule, PRETRAIN_MODEL_ABBR
 
-
 from transformers import logging
 
 logging.set_verbosity_error()
@@ -24,10 +23,6 @@ log = get_pylogger(__name__)
 # sets seeds for numpy, torch and python.random.
 seed_everything(42, workers=True)
 
-for path in ["logs", "models"]:
-    if not os.path.exists(path):
-        os.mkdir(path)
-
 args = {
     "lr": 0.00001,
     "epochs": 200,
@@ -35,11 +30,10 @@ args = {
     "batch_size": 16,
     "input_type": "id",
     "dataset": "MIND_large",
-    "sasrec_hidden_size": 64,
+    "dim": 64,
     "num_blocks": 2,
     "num_heads": 2,
     "dropout": 0.1,
-    # unfreeze layers from the last, e.g. 1,2 or 0 for not unfreeze
     "unfreeze": 0,
     "pretrained_model": "facebook/opt-125m",
     "sasrec_seq_len": 20,
@@ -50,48 +44,142 @@ args = {
     "no_grad": False,  # tatolly freeze and save memory
     "use_mlp_connect": False,
     "mlp_layers_num": 4,
-    "mlp_inner_size": [784 * 4, 784, 64]
+    "mlp_inner_size": [784 * 4, 784, 64],
 }
 
 argparser = argparse.ArgumentParser()
 
-argparser.add_argument("--lr", type=float, default=args["lr"])
-argparser.add_argument("--epochs", type=int, default=args["epochs"])
-argparser.add_argument("--device", type=str, default=args["device"])
-argparser.add_argument("--batch_size", type=int, default=args["batch_size"])
-argparser.add_argument("--input_type", type=str, default=args["input_type"])
-argparser.add_argument("--dataset", type=str, default=args["dataset"])
-argparser.add_argument("--sasrec_hidden_size", type=int, default=args["sasrec_hidden_size"])
-argparser.add_argument("--num_blocks", type=int, default=args["num_blocks"])
-argparser.add_argument("--num_heads", type=int, default=args["num_heads"])
-argparser.add_argument("--dropout", type=float, default=args["dropout"])
-argparser.add_argument("--unfreeze", type=int, default=args["unfreeze"])
-argparser.add_argument("--pretrained_model", type=str, default=args["pretrained_model"])
-argparser.add_argument("--no_grad", type=bool, default=args["no_grad"])
-argparser.add_argument("--use_mlp_connect",
-                       type=bool,
-                       default=args["use_mlp_connect"])
-argparser.add_argument("--mlp_layers_num",
+argparser.add_argument("--device",
+                       type=str,
+                       default=args["device"],
+                       help="device to use as str like 'cuda:0'")
+
+argparser.add_argument("--lr",
+                       type=float,
+                       default=args["lr"],
+                       help="learning rate")
+
+argparser.add_argument("--epochs",
                        type=int,
-                       default=args["mlp_layers_num"])
-argparser.add_argument("--mlp_inner_size",
-                       type=list,
-                       default=args["mlp_inner_size"])
-argparser.add_argument("--tokenized_len",
+                       default=args["epochs"],
+                       help="number of epochs")
+
+argparser.add_argument("--batch_size",
                        type=int,
-                       default=args["tokenized_len"])
-argparser.add_argument("--sasrec_seq_len",
+                       default=args["batch_size"],
+                       help="batch size")
+
+argparser.add_argument("--num_blocks",
                        type=int,
-                       default=args["sasrec_seq_len"])
+                       default=args["num_blocks"],
+                       help="the encoder blocks number of sasrec")
+
+argparser.add_argument("--num_heads",
+                       type=int,
+                       default=args["num_heads"],
+                       help="the attention heads number of encoder in sasrec")
+
 argparser.add_argument("--layer_norm_eps",
                        type=float,
-                       default=args["layer_norm_eps"])
-argparser.add_argument("--min_item_seq_len",
+                       default=args["layer_norm_eps"],
+                       help="layer norm eps")
+
+argparser.add_argument("--mlp_layers_num",
                        type=int,
-                       default=args["min_item_seq_len"])
-argparser.add_argument("--max_item_seq_len",
-                       type=int,
-                       default=args["max_item_seq_len"])
+                       default=args["mlp_layers_num"],
+                       help="mlp layers number when use_mlp_connect is True")
+
+argparser.add_argument(
+    "--tokenized_len",
+    type=int,
+    default=args["tokenized_len"],
+    help="when input is text, each sentence will be tokenized to this length")
+
+argparser.add_argument(
+    "--sasrec_seq_len",
+    type=int,
+    default=args["sasrec_seq_len"],
+    help="behaviors(interactions) of each user will be cut to this length")
+
+argparser.add_argument(
+    "--input_type",
+    type=str,
+    default=args["input_type"],
+    help="input type of the model, only support 'id' and 'test'")
+
+argparser.add_argument(
+    "--dataset",
+    type=str,
+    default=args["dataset"],
+    help="dataset name, only support 'MIND_large' and 'MIND_small'")
+
+argparser.add_argument(
+    "--dim",
+    type=int,
+    default=args["dim"],
+    help="dim of both the embedding and sasrec hidden layer when input is id, "
+    "when input is text this is the hidden size of sasrec")
+
+argparser.add_argument(
+    "--dropout",
+    type=float,
+    default=args["dropout"],
+    help="dropout prob of all dropout layers across the model")
+
+argparser.add_argument(
+    "--unfreeze",
+    type=int,
+    default=args["unfreeze"],
+    help="unfreeze layers from the last, e.g. 1,2 or 0 for not unfreeze")
+
+argparser.add_argument(
+    "--no_grad",
+    type=bool,
+    default=args["no_grad"],
+    help="whether tatolly freeze the model which could save memory")
+
+argparser.add_argument(
+    "--pretrained_model",
+    type=str,
+    default=args["pretrained_model"],
+    help=
+    "pretrained model specified by name or path, e.g. "
+    "'bert-base-uncased' or 'bert-base-uncased.tar.gz'"
+)
+
+argparser.add_argument(
+    "--use_mlp_connect",
+    type=bool,
+    default=args["use_mlp_connect"],
+    help=
+    "whether use mlp connect when input is text to connect the pretrained model and sasrec"
+)
+
+argparser.add_argument(
+    "--mlp_inner_size",
+    type=list,
+    default=args["mlp_inner_size"],
+    help="mlp inner size when use_mlp_connect is True, "
+    "the first and last dim would be set automatically as the same as the pretrained model and sasrec, "
+    "so the length of this list should be mlp_layers_num - 2, e.g. [784 * 4, 784, 64]"
+)
+
+argparser.add_argument(
+    "--min_item_seq_len",
+    type=int,
+    default=args["min_item_seq_len"],
+    help=
+    "minimum behaviors(interactions) sequence length of each user for filtering"
+)
+
+argparser.add_argument(
+    "--max_item_seq_len",
+    type=int,
+    default=args["max_item_seq_len"],
+    help=
+    "maximum behaviors(interactions) sequence length of each user for filtering"
+)
+
 
 args = argparser.parse_args()
 
@@ -117,8 +205,8 @@ model = SeqRecommender(
     pretrained_model=args.pretrained_model,
     n_layers=args.num_blocks,
     n_heads=args.num_heads,
-    hidden_size=args.sasrec_hidden_size,
-    inner_size=args.sasrec_hidden_size * 4,
+    hidden_size=args.dim,
+    inner_size=args.dim * 4,
     hidden_dropout=args.dropout,
     attention_dropout=args.dropout,
     layer_norm_eps=args.layer_norm_eps,
@@ -142,7 +230,7 @@ elif args.input_type == "Text":
     else:
         raise ValueError("Unknown backbone name")
 
-exec_time = datetime.now().strftime('%m%d%H%M%S')
+exec_time = datetime.now().strftime("%m%d%H%M%S")
 version_name = f"{backbone_name}_{exec_time}"
 
 checkpoint_callback = ModelCheckpoint(
@@ -150,7 +238,8 @@ checkpoint_callback = ModelCheckpoint(
     save_top_k=1,
     monitor="val_HR@10",
     mode="max",
-    filename="-{epoch:02d}-{val_HR@10:.2f}")
+    filename="-{epoch:02d}-{val_HR@10:.2f}",
+)
 
 early_stop_callback = EarlyStopping(monitor="val_HR@10",
                                     mode="max",
@@ -175,5 +264,3 @@ trainer = Trainer(
 )
 
 trainer.fit(model, datamodule=dm)
-
-
