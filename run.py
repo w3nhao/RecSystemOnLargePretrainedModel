@@ -1,12 +1,13 @@
 import os
 import argparse
-
+from datetime import datetime
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning import loggers as pl_loggers
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from models.recommender import SeqRecommender
-from datamodules.datamodule import SeqDataModule
+from datamodules.datamodule import SeqDataModule, PRETRAIN_MODEL_ABBR
+
 
 from transformers import logging
 
@@ -15,9 +16,6 @@ logging.set_verbosity_error()
 from utils.pylogger import get_pylogger
 
 log = get_pylogger(__name__)
-
-tb_logger = pl_loggers.TensorBoardLogger(save_dir="logs/")
-csv_logger = pl_loggers.CSVLogger(save_dir="logs/")
 
 # import wandb
 # wandb.login
@@ -36,14 +34,14 @@ args = {
     "epochs": 200,
     "device": ["cuda:6"],
     "batch_size": 16,
-    "input_type": "text",
-    "dataset": "MIND_small",
+    "input_type": "id",
+    "dataset": "MIND_large",
     "dim": 64,
     "num_blocks": 2,
     "num_heads": 2,
     "dropout": 0.1,
     # unfreeze layers from the last, e.g. 1,2 or None for not unfreeze
-    "unfreeze":0,  
+    "unfreeze": 0,
     "opt": "facebook/opt-125m",
     "sasrec_seq_len": 20,
     "tokenized_len": 30,
@@ -53,7 +51,7 @@ args = {
     "no_grad": False,  # tatolly freeze and save memory
     "use_mlp_connect": False,
     "mlp_layers_num": 4,
-    "mlp_inner_size": [784*4, 64]
+    "mlp_inner_size": [784 * 4, 64]
 }
 
 argparser = argparse.ArgumentParser()
@@ -72,9 +70,15 @@ argparser.add_argument("--dropout", type=float, default=args["dropout"])
 argparser.add_argument("--unfreeze", type=int, default=args["unfreeze"])
 argparser.add_argument("--opt", type=str, default=args["opt"])
 argparser.add_argument("--no_grad", type=bool, default=args["no_grad"])
-argparser.add_argument("--use_mlp_connect", type=bool, default=args["use_mlp_connect"])
-argparser.add_argument("--mlp_layers_num", type=int, default=args["mlp_layers_num"])
-argparser.add_argument("--mlp_inner_size", type=list, default=args["mlp_inner_size"])
+argparser.add_argument("--use_mlp_connect",
+                       type=bool,
+                       default=args["use_mlp_connect"])
+argparser.add_argument("--mlp_layers_num",
+                       type=int,
+                       default=args["mlp_layers_num"])
+argparser.add_argument("--mlp_inner_size",
+                       type=list,
+                       default=args["mlp_inner_size"])
 argparser.add_argument("--tokenized_len",
                        type=int,
                        default=args["tokenized_len"])
@@ -128,14 +132,50 @@ model = SeqRecommender(
 
 devices = [int(d[-1]) for d in args.device]
 
+if args.input_type == "id":
+    model_name = "SASRecWithID"
+    backbone_name = "EMB"
+elif args.input_type == "Text":
+    model_name = "SASRecWithText"
+    if args.opt.startswith("facebook"):
+        backbone_name = PRETRAIN_MODEL_ABBR[args.opt]
+    elif args.opt.startswith("google"):
+        backbone_name = "BERT"
+    else:
+        raise ValueError("Unknown backbone name")
+
+exec_time = datetime.now().strftime('%m%d%H%M%S')
+version_name = f"{backbone_name}_{exec_time}"
+
+checkpoint_callback = ModelCheckpoint(
+    dirpath=f"logs/{model_name}/{version_name}",
+    save_top_k=1,
+    monitor="val_HR@10",
+    mode="max",
+    filename="-{epoch:02d}-{val_HR@10:.2f}")
+
+early_stop_callback = EarlyStopping(monitor="val_HR@10",
+                                    mode="max",
+                                    patience=5)
+
+tb_logger = pl_loggers.TensorBoardLogger(save_dir="logs/",
+                                         name=model_name,
+                                         version=version_name)
+
+csv_logger = pl_loggers.CSVLogger(save_dir="logs/",
+                                  name=model_name,
+                                  version=version_name)
+
 trainer = Trainer(
     logger=[tb_logger, csv_logger],
     max_epochs=args.epochs,
     accelerator="gpu",
     devices=devices,
     deterministic=True,
-    callbacks=[EarlyStopping(monitor="val_HR@10", mode="max", patience=5)],
+    callbacks=[checkpoint_callback, early_stop_callback],
     # fast_dev_run=2,
 )
 
 trainer.fit(model, datamodule=dm)
+
+
