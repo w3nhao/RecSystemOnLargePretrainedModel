@@ -43,11 +43,6 @@ _TOKENIZER_FOR_DOC = "GPT2Tokenizer"
 # Base model docstring
 _EXPECTED_OUTPUT_SHAPE = [1, 8, 1024]
 
-# SequenceClassification docstring
-_CHECKPOINT_FOR_SEQUENCE_CLASSIFICATION = "ArthurZ/opt-350m-dummy-sc"
-_SEQ_CLASS_EXPECTED_LOSS = 1.71
-_SEQ_CLASS_EXPECTED_OUTPUT = "'LABEL_0'"
-
 OPT_PRETRAINED_MODEL_ARCHIVE_LIST = [
     "facebook/opt-125m",
     "facebook/opt-350m",
