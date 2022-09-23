@@ -53,6 +53,11 @@ class SeqRecommender(pl.LightningModule):
                 item_token_num, hidden_size, padding_idx=0
             )
             self.item_feature_extractor = None
+            # if use_mlp_connect:
+            #     raise NotImplementedError(
+            #         "use_mlp_connect=True is not implemented for input_type=id"
+            #     )
+            
 
         elif input_type == "text":
             self.item_embedding = None
@@ -226,8 +231,8 @@ class SeqRecommender(pl.LightningModule):
             num_mask = torch.clamp(attn_mask_expanded.sum(1), min=1e-9)
             item_embs = sum_embs / num_mask  # (B * L_sas, H_opt)
 
-        item_embs = self.linear_connector(item_embs)  # (B * L_sas, H_sas)
-        item_embs = item_embs.view(-1, self.sasrec_seq_len, self.hidden_size)
+            item_embs = self.linear_connector(item_embs)  # (B * L_sas, H_sas)
+            item_embs = item_embs.view(-1, self.sasrec_seq_len, self.hidden_size)
 
         output = self.sasrec(item_embs, item_seq_mask)  # (B, L_sas, H_sas)
         output = self.project_layer(output)
