@@ -235,7 +235,7 @@ exec_time = datetime.now().strftime("%m%d%H%M%S")
 version_name = f"{backbone_name}_{exec_time}"
 
 checkpoint_callback = ModelCheckpoint(
-    dirpath=f"logs/{model_name}/{version_name}",
+    dirpath=f"logs/{args.dataset}/{model_name}/{version_name}",
     save_top_k=1,
     monitor="val_HR@10",
     mode="max",
@@ -246,11 +246,11 @@ early_stop_callback = EarlyStopping(monitor="val_HR@10",
                                     mode="max",
                                     patience=5)
 
-tb_logger = pl_loggers.TensorBoardLogger(save_dir="logs/",
+tb_logger = pl_loggers.TensorBoardLogger(save_dir=f"logs/{args.dataset}/",
                                          name=model_name,
                                          version=version_name)
 
-csv_logger = pl_loggers.CSVLogger(save_dir="logs/",
+csv_logger = pl_loggers.CSVLogger(save_dir=f"logs/{args.dataset}/",
                                   name=model_name,
                                   version=version_name)
 
