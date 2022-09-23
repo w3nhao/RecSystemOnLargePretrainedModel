@@ -69,6 +69,59 @@ argparser.add_argument("--batch_size",
                        default=args["batch_size"],
                        help="batch size")
 
+argparser.add_argument(
+    "--dropout",
+    type=float,
+    default=args["dropout"],
+    help="dropout prob of all dropout layers across the model")
+
+argparser.add_argument(
+    "--input_type",
+    type=str,
+    default=args["input_type"],
+    help="input type of the model, only support 'id' and 'test'")
+
+argparser.add_argument(
+    "--tokenized_len",
+    type=int,
+    default=args["tokenized_len"],
+    help="when input is text, each sentence will be tokenized to this length")
+
+argparser.add_argument(
+    "--dataset",
+    type=str,
+    default=args["dataset"],
+    help="dataset name, only support 'MIND_large' and 'MIND_small'")
+
+argparser.add_argument(
+    "--min_item_seq_len",
+    type=int,
+    default=args["min_item_seq_len"],
+    help=
+    "minimum behaviors(interactions) sequence length of each user for filtering"
+)
+
+argparser.add_argument(
+    "--max_item_seq_len",
+    type=int,
+    default=args["max_item_seq_len"],
+    help=
+    "maximum behaviors(interactions) sequence length of each user for filtering"
+)
+
+argparser.add_argument(
+    "--sasrec_seq_len",
+    type=int,
+    default=args["sasrec_seq_len"],
+    help="behaviors(interactions) of each user will be cut to this length")
+
+argparser.add_argument(
+    "--dim",
+    type=int,
+    default=args["dim"],
+    help="dim of both the embedding and sasrec hidden layer when input is id, "
+    "when input is text this is the hidden size of sasrec")
+
 argparser.add_argument("--num_blocks",
                        type=int,
                        default=args["num_blocks"],
@@ -82,49 +135,7 @@ argparser.add_argument("--num_heads",
 argparser.add_argument("--layer_norm_eps",
                        type=float,
                        default=args["layer_norm_eps"],
-                       help="layer norm eps")
-
-argparser.add_argument("--mlp_layers_num",
-                       type=int,
-                       default=args["mlp_layers_num"],
-                       help="mlp layers number when use_mlp_connect is True")
-
-argparser.add_argument(
-    "--tokenized_len",
-    type=int,
-    default=args["tokenized_len"],
-    help="when input is text, each sentence will be tokenized to this length")
-
-argparser.add_argument(
-    "--sasrec_seq_len",
-    type=int,
-    default=args["sasrec_seq_len"],
-    help="behaviors(interactions) of each user will be cut to this length")
-
-argparser.add_argument(
-    "--input_type",
-    type=str,
-    default=args["input_type"],
-    help="input type of the model, only support 'id' and 'test'")
-
-argparser.add_argument(
-    "--dataset",
-    type=str,
-    default=args["dataset"],
-    help="dataset name, only support 'MIND_large' and 'MIND_small'")
-
-argparser.add_argument(
-    "--dim",
-    type=int,
-    default=args["dim"],
-    help="dim of both the embedding and sasrec hidden layer when input is id, "
-    "when input is text this is the hidden size of sasrec")
-
-argparser.add_argument(
-    "--dropout",
-    type=float,
-    default=args["dropout"],
-    help="dropout prob of all dropout layers across the model")
+                       help="eps for layer norm layers across the model")
 
 argparser.add_argument(
     "--unfreeze",
@@ -155,6 +166,11 @@ argparser.add_argument(
     "whether use mlp connect when input is text to connect the pretrained model and sasrec"
 )
 
+argparser.add_argument("--mlp_layers_num",
+                       type=int,
+                       default=args["mlp_layers_num"],
+                       help="mlp layers number when use_mlp_connect is True")
+
 argparser.add_argument(
     "--mlp_inner_size",
     type=list,
@@ -164,21 +180,6 @@ argparser.add_argument(
     "so the length of this list should be mlp_layers_num - 2, e.g. [784 * 4, 784, 64]"
 )
 
-argparser.add_argument(
-    "--min_item_seq_len",
-    type=int,
-    default=args["min_item_seq_len"],
-    help=
-    "minimum behaviors(interactions) sequence length of each user for filtering"
-)
-
-argparser.add_argument(
-    "--max_item_seq_len",
-    type=int,
-    default=args["max_item_seq_len"],
-    help=
-    "maximum behaviors(interactions) sequence length of each user for filtering"
-)
 
 
 args = argparser.parse_args()
