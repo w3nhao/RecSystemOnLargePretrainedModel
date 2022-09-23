@@ -30,45 +30,43 @@ for path in ["logs", "models"]:
 
 args = {
     "lr": 0.00001,
-    "finetune_lr": "None",
     "epochs": 200,
-    "device": ["cuda:6"],
+    "device": ["cuda:0"],
     "batch_size": 16,
     "input_type": "id",
     "dataset": "MIND_large",
-    "dim": 64,
+    "sasrec_hidden_size": 64,
     "num_blocks": 2,
     "num_heads": 2,
     "dropout": 0.1,
-    # unfreeze layers from the last, e.g. 1,2 or None for not unfreeze
+    # unfreeze layers from the last, e.g. 1,2 or 0 for not unfreeze
     "unfreeze": 0,
-    "opt": "facebook/opt-125m",
+    "pretrained_model": "facebook/opt-125m",
     "sasrec_seq_len": 20,
     "tokenized_len": 30,
-    "layer_norm_eps": 1e-12,
+    "layer_norm_eps": 1e-6,
     "min_item_seq_len": 5,
     "max_item_seq_len": None,
     "no_grad": False,  # tatolly freeze and save memory
     "use_mlp_connect": False,
     "mlp_layers_num": 4,
-    "mlp_inner_size": [784 * 4, 64]
+    "mlp_inner_size": [784 * 4, 784, 64]
 }
 
 argparser = argparse.ArgumentParser()
 
 argparser.add_argument("--lr", type=float, default=args["lr"])
-argparser.add_argument("--finetune_lr", type=str, default=args["finetune_lr"])
 argparser.add_argument("--epochs", type=int, default=args["epochs"])
 argparser.add_argument("--device", type=str, default=args["device"])
 argparser.add_argument("--batch_size", type=int, default=args["batch_size"])
 argparser.add_argument("--input_type", type=str, default=args["input_type"])
 argparser.add_argument("--dataset", type=str, default=args["dataset"])
-argparser.add_argument("--dim", type=int, default=args["dim"])
+argparser.add_argument("--sasrec_hidden_size", type=int, default=args["sasrec_hidden_size"])
 argparser.add_argument("--num_blocks", type=int, default=args["num_blocks"])
 argparser.add_argument("--num_heads", type=int, default=args["num_heads"])
 argparser.add_argument("--dropout", type=float, default=args["dropout"])
 argparser.add_argument("--unfreeze", type=int, default=args["unfreeze"])
-argparser.add_argument("--opt", type=str, default=args["opt"])
+argparser.add_argument("--pretrained_model", type=str, default=args["pretrained_model"])
 argparser.add_argument("--no_grad", type=bool, default=args["no_grad"])
 argparser.add_argument("--use_mlp_connect",
                        type=bool,
@@ -100,7 +98,7 @@ args = argparser.parse_args()
 dm = SeqDataModule(
     data_name=args.dataset,
     batch_size=args.batch_size,
-    pretrained_model=args.opt,
+    pretrained_model=args.pretrained_model,
     sasrec_seq_len=args.sasrec_seq_len,
     tokenized_len=args.tokenized_len,
     min_item_seq_len=args.min_item_seq_len,
@@ -116,11 +114,11 @@ model = SeqRecommender(
     num_unfreeze_layers=args.unfreeze,
     no_grad=args.no_grad,
     input_type=args.input_type,
-    pretrained_model=args.opt,
+    pretrained_model=args.pretrained_model,
     n_layers=args.num_blocks,
     n_heads=args.num_heads,
-    hidden_size=args.dim,
-    inner_size=args.dim * 4,
+    hidden_size=args.sasrec_hidden_size,
+    inner_size=args.sasrec_hidden_size * 4,
     hidden_dropout=args.dropout,
     attention_dropout=args.dropout,
     layer_norm_eps=args.layer_norm_eps,
@@ -137,9 +135,9 @@ if args.input_type == "id":
     backbone_name = "EMB"
 elif args.input_type == "Text":
     model_name = "SASRecWithText"
-    if args.opt.startswith("facebook"):
-        backbone_name = PRETRAIN_MODEL_ABBR[args.opt]
-    elif args.opt.startswith("google"):
+    if args.pretrained_model.startswith("facebook"):
+        backbone_name = PRETRAIN_MODEL_ABBR[args.pretrained_model]
+    elif args.pretrained_model.startswith("google"):
         backbone_name = "BERT"
     else:
         raise ValueError("Unknown backbone name")
