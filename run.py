@@ -16,8 +16,8 @@ from utils.pylogger import get_pylogger
 
 log = get_pylogger(__name__)
 
-tb_logger = pl_loggers.TensorBoardLogger(save_dir="lightning_logs/")
-csv_logger = pl_loggers.CSVLogger(save_dir="lightning_logs/")
+tb_logger = pl_loggers.TensorBoardLogger(save_dir="logs/")
+csv_logger = pl_loggers.CSVLogger(save_dir="logs/")
 
 # import wandb
 # wandb.login
