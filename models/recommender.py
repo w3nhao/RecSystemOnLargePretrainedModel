@@ -22,6 +22,7 @@ METRIC_ABBR = {
 
 
 class SeqRecommender(pl.LightningModule):
+
     def __init__(
         self,
         item_token_num,
@@ -47,17 +48,17 @@ class SeqRecommender(pl.LightningModule):
         super(SeqRecommender, self).__init__()
         ignore_save_args = []
         if input_type == "id":
-            ignore_save_args.append(["pretrained_model", "num_unfreeze_layers", "no_grad"])
+            ignore_save_args.append(
+                ["pretrained_model", "num_unfreeze_layers", "no_grad"])
 
-            self.item_embedding = torch.nn.Embedding(
-                item_token_num, hidden_size, padding_idx=0
-            )
+            self.item_embedding = torch.nn.Embedding(item_token_num,
+                                                     hidden_size,
+                                                     padding_idx=0)
             self.item_feature_extractor = None
             # if use_mlp_connect:
             #     raise NotImplementedError(
             #         "use_mlp_connect=True is not implemented for input_type=id"
             #     )
-            
 
         elif input_type == "text":
             self.item_embedding = None
@@ -66,45 +67,38 @@ class SeqRecommender(pl.LightningModule):
             if pretrained_model.startswith("facebook/opt"):
                 if num_unfreeze_layers == 0:
                     self.item_feature_extractor = OPTModel.from_pretrained(
-                        pretrained_model, output_hidden_states=True
-                    )
+                        pretrained_model, output_hidden_states=True)
                     for param in self.item_feature_extractor.parameters():
                         param.requires_grad = False
 
                 elif num_unfreeze_layers > 0:
                     self.item_feature_extractor = OPTModel.from_pretrained(
-                        pretrained_model, output_hidden_states=True
-                    )
+                        pretrained_model, output_hidden_states=True)
                     for param in self.item_feature_extractor.parameters():
                         param.requires_grad = False
                     for param in self.item_feature_extractor.decoder.layers[
-                        -num_unfreeze_layers:
-                    ].parameters():
+                            -num_unfreeze_layers:].parameters():
                         param.requires_grad = True
 
                 else:
                     raise ValueError(
-                        "num_unfreeze_layers should be non-negative integer."
-                    )
+                        "num_unfreeze_layers should be non-negative integer.")
 
             output_size = self.item_feature_extractor.config.hidden_size
-            
+
             if use_mlp_connect:
                 assert mlp_layers_num > 2
 
                 mlp_sizes = [output_size] + mlp_inner_size + [hidden_size]
-                assert len(mlp_sizes) == mlp_layers_num
+                assert len(mlp_sizes) == mlp_layers_num + 1
 
-                self.mlp_connector = nn.ModuleList(
-                    [
-                        nn.Sequential(
-                            nn.Linear(mlp_sizes[i], mlp_sizes[i + 1]),
-                            nn.ReLU(),
-                            nn.LayerNorm(mlp_sizes[i + 1], eps=layer_norm_eps),
-                        )
-                        for i in range(mlp_layers_num)
-                    ]
-                )
+                self.mlp_connector = nn.ModuleList([
+                    nn.Sequential(
+                        nn.Linear(mlp_sizes[i], mlp_sizes[i + 1]),
+                        nn.ReLU(),
+                        nn.LayerNorm(mlp_sizes[i + 1], eps=layer_norm_eps),
+                    ) for i in range(mlp_layers_num)
+                ])
                 self.linear_connector = None
 
             else:
@@ -157,13 +151,11 @@ class SeqRecommender(pl.LightningModule):
         self.topk_metric = {}
 
         for topk in self.topk_list:
-            metrics = MetricCollection(
-                [
-                    RetrievalHitRate(k=topk),
-                    RetrievalNormalizedDCG(k=topk),
-                    RetrievalMRR(k=topk),
-                ]
-            )
+            metrics = MetricCollection([
+                RetrievalHitRate(k=topk),
+                RetrievalNormalizedDCG(k=topk),
+                RetrievalMRR(k=topk),
+            ])
             self.topk_metric[topk] = metrics
 
         self.loss_fct = nn.CrossEntropyLoss()
@@ -185,11 +177,13 @@ class SeqRecommender(pl.LightningModule):
 
     def _gather_indexes(self, output, gather_index):
         """Gathers the vectors at the specific positions over a minibatch"""
-        gather_index = gather_index.view(-1, 1, 1).expand(-1, -1, output.shape[-1])
+        gather_index = gather_index.view(-1, 1,
+                                         1).expand(-1, -1, output.shape[-1])
         output_tensor = output.gather(dim=1, index=gather_index)
         return output_tensor.squeeze(1)
 
-    def forward(self, item_id_seq, item_seq_mask, tokenized_ids, attention_mask):
+    def forward(self, item_id_seq, item_seq_mask, tokenized_ids,
+                attention_mask):
         if self.input_type == "id":
             item_embs = self.item_embedding(item_id_seq)
 
@@ -203,15 +197,13 @@ class SeqRecommender(pl.LightningModule):
             # unfreeze the last num_unfreeze_layers of OPT
             if self.num_unfreeze_layers >= 0 and not self.no_grad:
                 output = self.item_feature_extractor(
-                    input_ids=tokenized_ids, attention_mask=attention_mask
-                )
+                    input_ids=tokenized_ids, attention_mask=attention_mask)
 
             # freeze all the parameters of OPT and do not compute gradients
             elif self.num_unfreeze_layers == 0 and self.no_grad:
                 with torch.no_grad():
                     output = self.item_feature_extractor(
-                        input_ids=tokenized_ids, attention_mask=attention_mask
-                    )
+                        input_ids=tokenized_ids, attention_mask=attention_mask)
 
             elif self.num_unfreeze_layers > 0 and self.no_grad:
                 raise NotImplementedError(
@@ -224,7 +216,8 @@ class SeqRecommender(pl.LightningModule):
                 raise NotImplementedError
 
             text_seq_embs = output.last_hidden_state  # (B * L_sas, L_opt, H_opt)
-            attn_mask_expanded = attention_mask.unsqueeze(-1).expand_as(text_seq_embs)
+            attn_mask_expanded = attention_mask.unsqueeze(-1).expand_as(
+                text_seq_embs)
 
             # mean pooling
             sum_embs = (text_seq_embs * attn_mask_expanded).sum(1)
@@ -232,7 +225,8 @@ class SeqRecommender(pl.LightningModule):
             item_embs = sum_embs / num_mask  # (B * L_sas, H_opt)
 
             item_embs = self.linear_connector(item_embs)  # (B * L_sas, H_sas)
-            item_embs = item_embs.view(-1, self.sasrec_seq_len, self.hidden_size)
+            item_embs = item_embs.view(-1, self.sasrec_seq_len,
+                                       self.hidden_size)
 
         output = self.sasrec(item_embs, item_seq_mask)  # (B, L_sas, H_sas)
         output = self.project_layer(output)
@@ -241,24 +235,18 @@ class SeqRecommender(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         item_id_seq, target_id_seq, item_seq_mask, tokenized_ids, attention_mask = batch
-        seq_emb = self.forward(
-            item_id_seq, item_seq_mask, tokenized_ids, attention_mask
-        )  # (B, L, N_items)
-        loss = self.loss_fct(
-            seq_emb.reshape(-1, seq_emb.size(-1)), target_id_seq.reshape(-1)
-        )
-        self.log(
-            "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True
-        )
+        seq_emb = self.forward(item_id_seq, item_seq_mask, tokenized_ids,
+                               attention_mask)  # (B, L, N_items)
+        loss = self.loss_fct(seq_emb.reshape(-1, seq_emb.size(-1)),
+                             target_id_seq.reshape(-1))
         return loss
 
     def validation_step(self, batch, batch_idx):
         item_id_seq, target_id_seq, item_seq_mask, tokenized_ids, attention_mask = batch
 
         # (B, L, N_items)
-        seq_emb = self.forward(
-            item_id_seq, item_seq_mask, tokenized_ids, attention_mask
-        )
+        seq_emb = self.forward(item_id_seq, item_seq_mask, tokenized_ids,
+                               attention_mask)
 
         # (B)
         last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1
@@ -269,23 +257,18 @@ class SeqRecommender(pl.LightningModule):
         # (B, 1)
         last_item = target_id_seq.gather(1, last_item_idx.view(-1, 1))
 
-        preds_scores, preds_items = torch.topk(
-            seq_last_emb.softmax(dim=-1), k=max(self.topk_list), dim=-1
-        )
+        preds_scores, preds_items = torch.topk(seq_last_emb.softmax(dim=-1),
+                                               k=max(self.topk_list),
+                                               dim=-1)
 
-        query_indexes = (
-            torch.arange(preds_scores.size(0))
-            .reshape(-1, 1)
-            .expand(-1, preds_scores.size(1))
-            .type_as(preds_items)
-        )
+        query_indexes = (torch.arange(preds_scores.size(0)).reshape(
+            -1, 1).expand(-1, preds_scores.size(1)).type_as(preds_items))
         metric_target = preds_items == last_item
 
         metric = {}
         for topk in self.topk_list:
-            metric[topk] = self.topk_metric[topk](
-                preds_scores, metric_target, query_indexes
-            )
+            metric[topk] = self.topk_metric[topk](preds_scores, metric_target,
+                                                  query_indexes)
         return metric
 
     def validation_epoch_end(self, outputs):
@@ -311,9 +294,8 @@ class SeqRecommender(pl.LightningModule):
         item_id_seq, target_id_seq, item_seq_mask, tokenized_ids, attention_mask = batch
 
         # (B, L, N_items)
-        seq_emb = self.forward(
-            item_id_seq, item_seq_mask, tokenized_ids, attention_mask
-        )
+        seq_emb = self.forward(item_id_seq, item_seq_mask, tokenized_ids,
+                               attention_mask)
 
         # (B)
         last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1
@@ -324,23 +306,18 @@ class SeqRecommender(pl.LightningModule):
         # (B, 1)
         last_item = target_id_seq.gather(1, last_item_idx.view(-1, 1))
 
-        preds_scores, preds_items = torch.topk(
-            seq_last_emb.softmax(dim=-1), k=max(self.topk_list), dim=-1
-        )
+        preds_scores, preds_items = torch.topk(seq_last_emb.softmax(dim=-1),
+                                               k=max(self.topk_list),
+                                               dim=-1)
 
-        query_indexes = (
-            torch.arange(preds_scores.size(0))
-            .reshape(-1, 1)
-            .expand(-1, preds_scores.size(1))
-            .type_as(preds_items)
-        )
+        query_indexes = (torch.arange(preds_scores.size(0)).reshape(
+            -1, 1).expand(-1, preds_scores.size(1)).type_as(preds_items))
         metric_target = preds_items == last_item
 
         metric = {}
         for topk in self.topk_list:
-            metric[topk] = self.topk_metric[topk](
-                preds_scores, metric_target, query_indexes
-            )
+            metric[topk] = self.topk_metric[topk](preds_scores, metric_target,
+                                                  query_indexes)
         return metric
 
     def test_epoch_end(self, outputs):
