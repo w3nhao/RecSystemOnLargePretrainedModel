@@ -332,7 +332,7 @@ class SeqRecommender(pl.LightningModule):
                 else:
                     log_on_progress_bar = False
                 self.log(
-                    f"val_{METRIC_ABBR[metric_name]}@{topk}",
+                    f"test_{METRIC_ABBR[metric_name]}@{topk}",
                     metric[topk][metric_name],
                     on_epoch=True,
                     prog_bar=log_on_progress_bar,
