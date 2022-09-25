@@ -1,4 +1,3 @@
-import os
 import argparse
 from datetime import datetime
 from pytorch_lightning import Trainer, seed_everything
@@ -7,12 +6,14 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from models.recommender import SeqRecommender
 from datamodules.datamodule import SeqDataModule, PRETRAIN_MODEL_ABBR
-
+from pytorch_lightning.profilers import PyTorchProfiler, AdvancedProfiler
+import torch.multiprocessing
 from transformers import logging
+from utils.pylogger import get_pylogger
+
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 logging.set_verbosity_error()
-
-from utils.pylogger import get_pylogger
 
 log = get_pylogger(__name__)
 
@@ -24,16 +25,17 @@ log = get_pylogger(__name__)
 seed_everything(42, workers=True)
 
 args = {
-    "lr": 0.00001,
+    "lr": 1e-3,
     "epochs": 200,
-    "device": ["cuda:0"],
-    "batch_size": 16,
+    "early_stop_patience": 10,
+    "devices": [7],
+    "batch_size": 128,
     "input_type": "id",
-    "dataset": "MIND_large",
-    "dim": 64,
+    "dataset": "MIND_small",
+    "dim": 256,
     "num_blocks": 2,
     "num_heads": 2,
-    "dropout": 0.1,
+    "dropout": 0.5,
     "unfreeze": 0,
     "pretrained_model": "facebook/opt-125m",
     "sasrec_seq_len": 20,
@@ -41,18 +43,21 @@ args = {
     "layer_norm_eps": 1e-6,
     "min_item_seq_len": 5,
     "max_item_seq_len": None,
-    "no_grad": False,  # tatolly freeze and save memory
-    "use_mlp_connect": False,
+    "no_grad": "no", 
+    "use_mlp_connect": "no",
     "mlp_layers_num": 4,
-    "mlp_inner_size": [784 * 4, 784, 64],
+    "mlp_inner_size": [3136, 784, 64],
+    "num_workers": 0,
 }
 
 argparser = argparse.ArgumentParser()
 
-argparser.add_argument("--device",
-                       type=str,
-                       default=args["device"],
-                       help="device to use as str like 'cuda:0'")
+argparser.add_argument("--devices",
+                       type=int,
+                       nargs="+",
+                       default=args["devices"],
+                       help="devices to use as list of int like 0 1 2"
+                        " for cuda:0 cuda:1 cuda:2")
 
 argparser.add_argument("--lr",
                        type=float,
@@ -68,6 +73,16 @@ argparser.add_argument("--batch_size",
                        type=int,
                        default=args["batch_size"],
                        help="batch size")
+
+argparser.add_argument("--num_workers",
+                       type=int,
+                       default=args["num_workers"],
+                       help="num_workers for dataloader")
+
+argparser.add_argument("--early_stop_patience",
+                       type=int,
+                       default=args["early_stop_patience"],
+                       help="early stop patience")
 
 argparser.add_argument(
     "--dropout",
@@ -103,7 +118,7 @@ argparser.add_argument(
 
 argparser.add_argument(
     "--max_item_seq_len",
-    type=int,
+    type=lambda x: None if x == "None" else int(x),
     default=args["max_item_seq_len"],
     help=
     "maximum behaviors(interactions) sequence length of each user for filtering"
@@ -145,7 +160,7 @@ argparser.add_argument(
 
 argparser.add_argument(
     "--no_grad",
-    type=bool,
+    type=str,
     default=args["no_grad"],
     help="whether tatolly freeze the model which could save memory")
 
@@ -160,7 +175,7 @@ argparser.add_argument(
 
 argparser.add_argument(
     "--use_mlp_connect",
-    type=bool,
+    type=str,
     default=args["use_mlp_connect"],
     help=
     "whether use mlp connect when input is text to connect the pretrained model and sasrec"
@@ -173,7 +188,8 @@ argparser.add_argument("--mlp_layers_num",
 
 argparser.add_argument(
     "--mlp_inner_size",
-    type=list,
+    type=int,
+    nargs="+",
     default=args["mlp_inner_size"],
     help="mlp inner size when use_mlp_connect is True, "
     "the first and last dim would be set automatically as the same as the pretrained model and sasrec, "
@@ -181,8 +197,10 @@ argparser.add_argument(
 )
 
 
-
 args = argparser.parse_args()
+
+args.no_grad = True if args.no_grad == "yes" else False
+args.use_mlp_connect = True if args.use_mlp_connect == "yes" else False
 
 dm = SeqDataModule(
     data_name=args.dataset,
@@ -192,6 +210,7 @@ dm = SeqDataModule(
     tokenized_len=args.tokenized_len,
     min_item_seq_len=args.min_item_seq_len,
     max_item_seq_len=args.max_item_seq_len,
+    num_workers=args.num_workers,
 )
 
 num_items = dm.prepare_data()
@@ -217,25 +236,24 @@ model = SeqRecommender(
     mlp_inner_size=args.mlp_inner_size,
 )
 
-devices = [int(d[-1]) for d in args.device]
 
 if args.input_type == "id":
     model_name = "SASRecWithID"
-    backbone_name = "EMB"
-elif args.input_type == "Text":
+    base_model_name = "EMB"
+elif args.input_type == "text":
     model_name = "SASRecWithText"
     if args.pretrained_model.startswith("facebook"):
-        backbone_name = PRETRAIN_MODEL_ABBR[args.pretrained_model]
+        base_model_name = PRETRAIN_MODEL_ABBR[args.pretrained_model]
     elif args.pretrained_model.startswith("google"):
-        backbone_name = "BERT"
+        base_model_name = "BERT"
     else:
         raise ValueError("Unknown backbone name")
 
-exec_time = datetime.now().strftime("%m%d%H%M%S")
-version_name = f"{backbone_name}_{exec_time}"
-
+exec_time = datetime.now().strftime("%y%m%d%H%M%S")
+devices_name = "cuda:" + "".join([str(i) for i in args.devices])
+version_name = f"{base_model_name}_{exec_time}"
 checkpoint_callback = ModelCheckpoint(
-    dirpath=f"logs/{args.dataset}/{model_name}/{version_name}",
+    dirpath=f"logs/{devices_name}/{args.dataset}/{model_name}/{version_name}",
     save_top_k=1,
     monitor="val_HR@10",
     mode="max",
@@ -244,24 +262,25 @@ checkpoint_callback = ModelCheckpoint(
 
 early_stop_callback = EarlyStopping(monitor="val_HR@10",
                                     mode="max",
-                                    patience=5)
+                                    patience=args.early_stop_patience)
 
-tb_logger = pl_loggers.TensorBoardLogger(save_dir=f"logs/{args.dataset}/",
+tb_logger = pl_loggers.TensorBoardLogger(save_dir=f"logs/{devices_name}/{args.dataset}",
                                          name=model_name,
                                          version=version_name)
 
-csv_logger = pl_loggers.CSVLogger(save_dir=f"logs/{args.dataset}/",
+csv_logger = pl_loggers.CSVLogger(save_dir=f"logs/{devices_name}/{args.dataset}",
                                   name=model_name,
-                                  version=version_name)
+                                  version=version_name,)
 
 trainer = Trainer(
     logger=[tb_logger, csv_logger],
     max_epochs=args.epochs,
     accelerator="gpu",
-    devices=devices,
+    devices=args.devices,
     deterministic=True,
     callbacks=[checkpoint_callback, early_stop_callback],
-    # fast_dev_run=2,
+    # fast_dev_run=100,
 )
 
 trainer.fit(model, datamodule=dm)
+trainer.test(datamodule=dm, ckpt_path="best")
