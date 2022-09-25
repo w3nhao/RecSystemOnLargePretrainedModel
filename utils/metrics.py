@@ -15,7 +15,7 @@ def get_topk_ranks(preds_socres, target, topk):
         hit_rank = hit_rank_arr[:, 1:2]
 
         all_rank = torch.zeros_like(target)
-        # set all rank maximum value of int64
+        
         all_rank[:] = torch.iinfo(torch.int64).max
         all_rank.scatter_(0, hit_preds, hit_rank)
 
@@ -74,8 +74,8 @@ class RecRetrivalMetric(Metric, ABC):
         self.add_state(f"accumulate_metric", default=torch.tensor(0), dist_reduce_fx="sum")
         self.add_state("accumulate_count", default=torch.tensor(0), dist_reduce_fx="sum")
         
-    def update(self, topk_rank, target):
-        self.accumulate_count += target.numel()
+    def update(self, topk_rank, batch_size):
+        self.accumulate_count += batch_size
         self.accumulate_metric += self._metric(topk_rank[topk_rank <= self.k])
     
     def compute(self):
@@ -99,7 +99,7 @@ class NDCG(RecRetrivalMetric):
     def _metric(self, topk_rank):
         return torch.sum(1.0 / torch.log2(topk_rank + 1))
     
-class Hit(RecRetrivalMetric):
+class HR(RecRetrivalMetric):
     def __init__(self, k):
         super().__init__(k)
     
