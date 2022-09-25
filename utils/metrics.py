@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
+from torchmetrics import Metric
 import torch
 
-def get_topk_ranks(preds_socres, target, topk):
-    """ get topk ranks of the target in the preds_socres
+def get_topk_ranks(pred_scores, target, topk):
+    """ get topk ranks of the target in the pred_scores
     example:
         import torch
         
-        preds_socres, topk_idx = torch.randn((2048, 30)).topk(20, dim=1)
+        pred_scores, topk_idx = torch.randn((2048, 30)).topk(20, dim=1)
         target = torch.randint(0, 20, (2048, 1))
 
         hit_rank_arr = (target == topk_idx).nonzero()
@@ -31,13 +32,13 @@ def get_topk_ranks(preds_socres, target, topk):
             hit_k = (all_rank <= k).sum()  / 2048
             print(f"hit@{k}: {hit_k.item()}")
     """
-    assert target.shape[0] == preds_socres.shape[0]
-    assert preds_socres.shape[1] >= topk
+    assert target.shape[0] == pred_scores.shape[0]
+    assert pred_scores.shape[1] >= topk
     
     if target.ndim == 1:
         target = target.unsqueeze(1)
         
-    _, topk_idx = preds_socres.topk(topk, dim=1)
+    _, topk_idx = pred_scores.topk(topk, dim=1)
     
     hit_rank_arr = (target == topk_idx).nonzero()
     
@@ -60,9 +61,9 @@ def get_topk_ranks(preds_socres, target, topk):
 class RecRetrivalMetric(Metric, ABC):
     """RecRetrivalMetric
     """
-    higher_is_better: True
-    full_state_update: False
-    is_differentiable: False
+    higher_is_better = True
+    full_state_update = False
+    is_differentiable = False
     
     def __init__(self, k):
 
@@ -71,7 +72,7 @@ class RecRetrivalMetric(Metric, ABC):
         assert k > 0
         self.k = k
         
-        self.add_state(f"accumulate_metric", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state(f"accumulate_metric", default=torch.tensor(0.0), dist_reduce_fx="sum")
         self.add_state("accumulate_count", default=torch.tensor(0), dist_reduce_fx="sum")
         
     def update(self, topk_rank, batch_size):
@@ -86,6 +87,10 @@ class RecRetrivalMetric(Metric, ABC):
         raise NotImplementedError
     
 class MRR(RecRetrivalMetric):
+    higher_is_better = True
+    full_state_update = False
+    is_differentiable = False
+
     def __init__(self, k):
         super().__init__(k)
         
@@ -93,6 +98,10 @@ class MRR(RecRetrivalMetric):
         return torch.sum(1.0 / topk_rank)
     
 class NDCG(RecRetrivalMetric):
+    higher_is_better = True
+    full_state_update = False
+    is_differentiable = False
+
     def __init__(self, k):
         super().__init__(k)
     
@@ -100,6 +109,10 @@ class NDCG(RecRetrivalMetric):
         return torch.sum(1.0 / torch.log2(topk_rank + 1))
     
 class HR(RecRetrivalMetric):
+    higher_is_better = True
+    full_state_update = False
+    is_differentiable = False
+
     def __init__(self, k):
         super().__init__(k)
     
