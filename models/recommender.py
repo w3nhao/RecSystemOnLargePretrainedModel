@@ -1,24 +1,16 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from torchmetrics import (
-    RetrievalHitRate,
-    MetricCollection,
-    RetrievalMRR,
-    RetrievalNormalizedDCG,
-)
+from torchmetrics import MetricCollection
 from models.sasrec import SASRec
 from models.opt import OPTModel
 
 from utils.pylogger import get_pylogger
+from utils.metrics import MRR, NDCG, HR, get_topk_ranks
 
 log = get_pylogger(__name__)
 
-METRIC_ABBR = {
-    "RetrievalHitRate": "HR",
-    "RetrievalNormalizedDCG": "NDCG",
-    "RetrievalMRR": "MRR",
-}
+METRIC_LIST = ["MRR", "NDCG", "HR"]
 
 
 class SeqRecommender(pl.LightningModule):
@@ -149,15 +141,11 @@ class SeqRecommender(pl.LightningModule):
 
         # metrics
         self.topk_metric = {}
-
-        for topk in self.topk_list:
-            metrics = MetricCollection([
-                RetrievalHitRate(k=topk),
-                RetrievalNormalizedDCG(k=topk),
-                RetrievalMRR(k=topk),
-            ])
-            self.topk_metric[topk] = metrics
-
+        self.topk_metric.update({f"MRR@{k}": MRR(k=k) for k in top_k_list})
+        self.topk_metric.update({f"HR@{k}": HR(k=k) for k in top_k_list})
+        self.topk_metric.update({f"NDCG@{k}": NDCG(k=k) for k in top_k_list})
+        self.topk_metric = MetricCollection(self.topk_metric)
+        
         self.loss_fct = nn.CrossEntropyLoss()
 
         # parameters initialization
@@ -257,38 +245,32 @@ class SeqRecommender(pl.LightningModule):
         # (B, 1)
         last_item = target_id_seq.gather(1, last_item_idx.view(-1, 1))
 
-        preds_scores, preds_items = torch.topk(seq_last_emb.softmax(dim=-1),
-                                               k=max(self.topk_list),
-                                               dim=-1)
+        pred_scores = seq_last_emb.softmax(dim=-1)
+        all_ranks = get_topk_ranks(pred_scores=pred_scores,
+                                   target=last_item,
+                                   topk=max(self.topk_list))
 
-        query_indexes = (torch.arange(preds_scores.size(0)).reshape(
-            -1, 1).expand(-1, preds_scores.size(1)).type_as(preds_items))
-        metric_target = preds_items == last_item
-
-        metric = {}
-        for topk in self.topk_list:
-            metric[topk] = self.topk_metric[topk](preds_scores, metric_target,
-                                                  query_indexes)
-        return metric
+        for k in self.topk_list:
+            for metric_name in METRIC_LIST:
+                metric = self.topk_metric[f"{metric_name}@{k}"]
+                metric.update(all_ranks, last_item.numel())
 
     def validation_epoch_end(self, outputs):
-        metric = {}
         for topk in self.topk_list:
-            metric[topk] = {}
-            for metric_name in outputs[0][topk].keys():
-                scores = [m[topk][metric_name] for m in outputs]
-                metric[topk][metric_name] = torch.stack(scores).mean()
-                if METRIC_ABBR[metric_name] in ["HR", "NDCG"] and topk == 10:
+            for metric_name in METRIC_LIST:
+                score = self.topk_metric[f"{metric_name}@{topk}"].compute()
+                if metric_name in ["HR", "NDCG"] and topk == 10:
                     log_on_progress_bar = True
                 else:
                     log_on_progress_bar = False
                 self.log(
-                    f"val_{METRIC_ABBR[metric_name]}@{topk}",
-                    metric[topk][metric_name],
+                    f"val_{metric_name}@{topk}",
+                    score,
                     on_epoch=True,
                     prog_bar=log_on_progress_bar,
                     logger=True,
                 )
+
 
     def test_step(self, batch, batch_idx):
         item_id_seq, target_id_seq, item_seq_mask, tokenized_ids, attention_mask = batch
@@ -306,34 +288,27 @@ class SeqRecommender(pl.LightningModule):
         # (B, 1)
         last_item = target_id_seq.gather(1, last_item_idx.view(-1, 1))
 
-        preds_scores, preds_items = torch.topk(seq_last_emb.softmax(dim=-1),
-                                               k=max(self.topk_list),
-                                               dim=-1)
+        pred_socres = seq_last_emb.softmax(dim=-1)
+        all_ranks = get_topk_ranks(pred_socres=pred_socres,
+                                   target=last_item,
+                                   topk=max(self.topk_list))
 
-        query_indexes = (torch.arange(preds_scores.size(0)).reshape(
-            -1, 1).expand(-1, preds_scores.size(1)).type_as(preds_items))
-        metric_target = preds_items == last_item
-
-        metric = {}
-        for topk in self.topk_list:
-            metric[topk] = self.topk_metric[topk](preds_scores, metric_target,
-                                                  query_indexes)
-        return metric
+        for k in self.topk_list:
+            for metric_name in METRIC_LIST:
+                metric = self.topk_metric[f"{metric_name}@{k}"]
+                metric.update(all_ranks, last_item.numel())
 
     def test_epoch_end(self, outputs):
-        metric = {}
         for topk in self.topk_list:
-            metric[topk] = {}
-            for metric_name in outputs[0][topk].keys():
-                scores = [m[topk][metric_name] for m in outputs]
-                metric[topk][metric_name] = torch.stack(scores).mean()
-                if METRIC_ABBR[metric_name] in ["HR", "NDCG"] and topk == 10:
+            for metric_name in METRIC_LIST:
+                score = self.topk_metric[f"{metric_name}@{topk}"].compute()
+                if metric_name in ["HR", "NDCG"] and topk == 10:
                     log_on_progress_bar = True
                 else:
                     log_on_progress_bar = False
                 self.log(
-                    f"test_{METRIC_ABBR[metric_name]}@{topk}",
-                    metric[topk][metric_name],
+                    f"test_{metric_name}@{topk}",
+                    score,
                     on_epoch=True,
                     prog_bar=log_on_progress_bar,
                     logger=True,
