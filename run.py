@@ -25,17 +25,17 @@ log = get_pylogger(__name__)
 seed_everything(42, workers=True)
 
 args = {
-    "lr": 1e-3,
-    "epochs": 200,
+    "lr": 1e-5,
+    "epochs": 3000,
     "early_stop_patience": 10,
     "devices": [7],
-    "batch_size": 128,
+    "batch_size": 16,
     "input_type": "id",
     "dataset": "MIND_small",
-    "dim": 256,
+    "dim": 64,
     "num_blocks": 2,
     "num_heads": 2,
-    "dropout": 0.5,
+    "dropout": 0.1,
     "unfreeze": 0,
     "pretrained_model": "facebook/opt-125m",
     "sasrec_seq_len": 20,

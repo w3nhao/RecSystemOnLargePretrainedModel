@@ -288,8 +288,8 @@ class SeqRecommender(pl.LightningModule):
         # (B, 1)
         last_item = target_id_seq.gather(1, last_item_idx.view(-1, 1))
 
-        pred_socres = seq_last_emb.softmax(dim=-1)
-        all_ranks = get_topk_ranks(pred_socres=pred_socres,
+        pred_scores = seq_last_emb.softmax(dim=-1)
+        all_ranks = get_topk_ranks(pred_socres=pred_scores,
                                    target=last_item,
                                    topk=max(self.topk_list))
 
