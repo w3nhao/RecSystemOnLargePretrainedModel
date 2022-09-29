@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from utils.pylogger import get_pylogger
 
-from transformers import GPT2Tokenizer
+from transformers import GPT2Tokenizer, BertTokenizer
 
 ITEM_ID_SEQ_FIELD = "input_seqs"
 TARGET_FIELD = "targets"
@@ -123,10 +123,12 @@ class DataPreporcessor:
             "targets": targets
         })
 
-    def prepare_items(self, pretrained_model, tokenized_len):
+    def prepare_items(self, plm, tokenized_len):
         """Prepare items data"""
-        if pretrained_model.startswith("facebook/opt"):
-            tokenizer = GPT2Tokenizer.from_pretrained(pretrained_model)
+        if plm.startswith("facebook/opt"):
+            tokenizer = GPT2Tokenizer.from_pretrained(plm)
+        elif plm.startswith("bert"):
+            tokenizer = BertTokenizer.from_pretrained(plm)
         else:
             raise NotImplementedError
 
@@ -218,10 +220,19 @@ class DataPreporcessor:
         item_id_text = ["[PAD]"] + item_id_text.tolist()
         return item_token_id, item_id_token, item_id_text
 
-    def save_data(self, save_dir):
-        for table_name, df in self.processed_df.items():
-            df.to_csv(
-                os.path.join(save_dir, table_name + ".processed.tsv"),
+    def save_inters(self, save_dir):
+        if self.inter_table in self.processed_df:
+            self.processed_df[self.inter_table].to_csv(
+                os.path.join(save_dir, f"{self.inter_table}.processed.tsv"),
+                sep="\t",
+                index=False,
+                encoding="utf-8",
+            )
+     
+    def save_items(self, save_dir, tokenizer_abbr):
+        if self.item_table in self.processed_df:
+            self.processed_df[self.item_table].to_csv(
+                os.path.join(save_dir, f"{self.item_table}_{tokenizer_abbr}.processed.tsv"),
                 sep="\t",
                 index=False,
                 encoding="utf-8",

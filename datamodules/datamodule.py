@@ -28,6 +28,8 @@ PRETRAIN_MODEL_ABBR = {
     "facebook/opt-6.7b": "OPT6.7B",
     "facebook/opt-13b": "OPT13B",
     "facebook/opt-30b": "OPT30B",
+    "bert-base-uncased": "BERTBASE",
+    "bert-large-uncased": "BERTLARGE",
 }
 
 
@@ -38,7 +40,7 @@ class SeqDataModule(LightningDataModule):
         data_name,
         min_item_seq_len,
         max_item_seq_len,
-        pretrained_model,
+        plm,
         tokenized_len,
         sasrec_seq_len,
         batch_size,
@@ -59,15 +61,15 @@ class SeqDataModule(LightningDataModule):
         self.max_item_seq_len = max_item_seq_len
         self.sasrec_seq_len = sasrec_seq_len
         self.tokenized_len = tokenized_len
-        self.pretrained_model = pretrained_model
+        self.plm = plm
 
         self.data_configs = get_configs(data_name)
 
-        encoder_abbr = PRETRAIN_MODEL_ABBR[self.pretrained_model]
+        self.tokenizer_abbr = PRETRAIN_MODEL_ABBR[self.plm]
         max_len = self.max_item_seq_len if self.max_item_seq_len else "INF"
         self.processed_dir = os.path.join(
             self.data_configs["data_dir"],
-            f"{encoder_abbr}"
+            f"{data_name}"
             f"_maxlen@{max_len}"
             f"_minlen@{self.min_item_seq_len}"
             f"_toklen@{self.tokenized_len}"
@@ -88,35 +90,46 @@ class SeqDataModule(LightningDataModule):
 
         Do not use it to assign state (self.x = y).
         """
-        if not os.path.exists(self.processed_dir):
-
-            data_prep = DataPreporcessor(
+        data_prep = DataPreporcessor(
                 data_cfg=self.data_configs,
                 max_item_seq_len=self.max_item_seq_len,
                 min_item_seq_len=self.min_item_seq_len,
             )
 
+        if not os.path.exists(self.processed_dir):
             data_prep.prepare_data()
-
             data_prep.prepare_inters(sasrec_seq_len=self.sasrec_seq_len)
-
             data_prep.prepare_items(
-                pretrained_model=self.pretrained_model,
+                plm=self.plm,
                 tokenized_len=self.tokenized_len,
             )
 
             os.makedirs(self.processed_dir)
-            data_prep.save_data(self.processed_dir)
+            data_prep.save_inters(self.processed_dir)
+            data_prep.save_items(self.processed_dir, self.tokenizer_abbr)
             num_items = data_prep.num_items
         else:
             item_table = self.data_configs["item_table"]
-            items = pd.read_csv(
-                os.path.join(self.processed_dir,
-                             f"{item_table}.processed.tsv"),
-                sep="\t",
-                header=0,
+            items_path = os.path.join(
+                self.processed_dir,
+                f"{item_table}_{self.tokenizer_abbr}.processed.tsv"
             )
-            num_items = len(items)
+            if not os.path.isfile(items_path):
+                data_prep.prepare_data()
+                data_prep.prepare_items(
+                    plm=self.plm,
+                    tokenized_len=self.tokenized_len,
+                )
+                data_prep.save_items(self.processed_dir, self.tokenizer_abbr)
+                num_items = data_prep.num_items
+            else:
+                items = pd.read_csv(
+                    items_path,
+                    sep="\t",
+                    header=0,
+                )
+                num_items = len(items)
+
         return num_items
 
     def setup(self, stage):
@@ -129,16 +142,18 @@ class SeqDataModule(LightningDataModule):
         if not self.data_train and not self.data_val and not self.data_test:
             inter_table = self.data_configs["inter_table"]
             item_table = self.data_configs["item_table"]
-
+            inters_path = os.path.join(self.processed_dir, f"{inter_table}.processed.tsv")
+            items_path = os.path.join(
+                self.processed_dir,
+                f"{item_table}_{self.tokenizer_abbr}.processed.tsv"
+            )
             inters = pd.read_csv(
-                os.path.join(self.processed_dir,
-                             f"{inter_table}.processed.tsv"),
+                inters_path,
                 sep="\t",
                 header=0,
             )
             items = pd.read_csv(
-                os.path.join(self.processed_dir,
-                             f"{item_table}.processed.tsv"),
+                items_path,
                 sep="\t",
                 header=0,
             )
@@ -167,7 +182,6 @@ class SeqDataModule(LightningDataModule):
                 tokenized_ids=tokenized_ids,
                 attention_mask=attention_mask,
             )
-
             self.data_val = TextSeqRecDataset(
                 item_id_seqs=item_id_seqs["val"],
                 targets=targets["val"],
