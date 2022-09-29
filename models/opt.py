@@ -22,7 +22,6 @@ from torch import nn
 
 from transformers.activations import ACT2FN
 
-from transformers import OPTModel
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import (
