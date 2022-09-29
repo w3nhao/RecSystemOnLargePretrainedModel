@@ -4,7 +4,6 @@ MAX_EPOCHS=300
 EARLY_STOPPING=10
 DIM=256
 DROPOUT=0.5
-UNFREEZE=0
 SASREC_SEQ_LEN=20
 NUM_BLOCKS=2
 NUM_HEADS=2
@@ -12,21 +11,27 @@ TOKENIZED_LEN=30
 LAYER_NORM_EPS=1e-6
 MIN_ITEM_SEQ_LEN=5
 MAX_ITEM_SEQ_LEN="None"
-NO_GRAD="no"
-USE_MLP_CONNECT="no"
+USE_MLP_PROJECTION="no"
 MLP_LAYERS_NUM=4
 MLP_INNER_SIZE="3136 784 64"
+USE_DEEP_PROMPT="no"
+PREFIX_PROJECTION="nonlinear"
+PREFIX_HIDDEN_SIZE=128
+PRE_SEQ_LEN=100
 NUM_WORKERS=6
 
+
 DATASET="MIND_large"
-INPUT_TYPE="id"
+INPUT_TYPE="text"
+POOLING_TYPE="mean"
 PRETRAINED_MODEL="facebook/opt-125m"
+UNFREEZE=4
 
 DEVICES=0
 
-for lr in 1e-5
+for lr in 1e-3
 do
-  for bs in 512 256 128 64
+  for bs in 64
   do
     python3 run.py --lr $lr \
                     --epochs $MAX_EPOCHS \
@@ -41,16 +46,20 @@ do
                     --num_heads $NUM_HEADS \
                     --dropout $DROPOUT \
                     --unfreeze $UNFREEZE \
-                    --pretrained_model $PRETRAINED_MODEL \
+                    --plm $PRETRAINED_MODEL \
                     --sasrec_seq_len $SASREC_SEQ_LEN \
                     --tokenized_len $TOKENIZED_LEN \
                     --layer_norm_eps $LAYER_NORM_EPS \
                     --min_item_seq_len $MIN_ITEM_SEQ_LEN \
                     --max_item_seq_len $MAX_ITEM_SEQ_LEN \
-                    --no_grad $NO_GRAD \
-                    --use_mlp_connect $USE_MLP_CONNECT \
+                    --use_mlp_projection $USE_MLP_PROJECTION \
                     --mlp_layers_num $MLP_LAYERS_NUM \
-                    --mlp_inner_size $MLP_INNER_SIZE
+                    --mlp_inner_size $MLP_INNER_SIZE  \
+                    --use_deep_prompt $USE_DEEP_PROMPT \
+                    --prefix_projection $PREFIX_PROJECTION \
+                    --prefix_hidden_size $PREFIX_HIDDEN_SIZE \
+                    --pre_seq_len $PRE_SEQ_LEN \
+                    --pooling_type $POOLING_TYPE 
     done
   done
 done

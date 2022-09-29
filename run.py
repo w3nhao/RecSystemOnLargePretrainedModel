@@ -17,6 +17,8 @@ logging.set_verbosity_error()
 
 log = get_pylogger(__name__)
 
+profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
+
 # import wandb
 # wandb.login
 # wandb.init(project="my-opt-sas-new", entity="alanwake")
@@ -25,29 +27,33 @@ log = get_pylogger(__name__)
 seed_everything(42, workers=True)
 
 args = {
-    "lr": 1e-5,
-    "epochs": 3000,
+    "lr": 1e-3,
+    "epochs": -1,
     "early_stop_patience": 10,
-    "devices": [7],
+    "devices": [3],
     "batch_size": 16,
-    "input_type": "id",
+    "input_type": "text",
     "dataset": "MIND_small",
     "dim": 64,
     "num_blocks": 2,
     "num_heads": 2,
     "dropout": 0.1,
     "unfreeze": 0,
-    "pretrained_model": "facebook/opt-125m",
+    "plm": "facebook/opt-125m",
     "sasrec_seq_len": 20,
     "tokenized_len": 30,
     "layer_norm_eps": 1e-6,
     "min_item_seq_len": 5,
     "max_item_seq_len": None,
-    "no_grad": "no", 
-    "use_mlp_connect": "no",
+    "use_deep_prompt": "no",
+    "prefix_projection": "nonlinear",
+    "prefix_hidden_size": 128,
+    "pre_seq_len": 100,
+    "use_mlp_projection": "no",
     "mlp_layers_num": 4,
     "mlp_inner_size": [3136, 784, 64],
     "num_workers": 0,
+    "pooling_type": "mean",
 }
 
 argparser = argparse.ArgumentParser()
@@ -159,24 +165,18 @@ argparser.add_argument(
     help="unfreeze layers from the last, e.g. 1,2 or 0 for not unfreeze")
 
 argparser.add_argument(
-    "--no_grad",
+    "--plm",
     type=str,
-    default=args["no_grad"],
-    help="whether tatolly freeze the model which could save memory")
-
-argparser.add_argument(
-    "--pretrained_model",
-    type=str,
-    default=args["pretrained_model"],
+    default=args["plm"],
     help=
     "pretrained model specified by name or path, e.g. "
     "'bert-base-uncased' or 'bert-base-uncased.tar.gz'"
 )
 
 argparser.add_argument(
-    "--use_mlp_connect",
+    "--use_mlp_projection",
     type=str,
-    default=args["use_mlp_connect"],
+    default=args["use_mlp_projection"],
     help=
     "whether use mlp connect when input is text to connect the pretrained model and sasrec"
 )
@@ -184,28 +184,67 @@ argparser.add_argument(
 argparser.add_argument("--mlp_layers_num",
                        type=int,
                        default=args["mlp_layers_num"],
-                       help="mlp layers number when use_mlp_connect is True")
+                       help="mlp layers number when use_mlp_projection is True")
 
 argparser.add_argument(
     "--mlp_inner_size",
     type=int,
     nargs="+",
     default=args["mlp_inner_size"],
-    help="mlp inner size when use_mlp_connect is True, "
+    help="mlp inner size when use_mlp_projection is True, "
     "the first and last dim would be set automatically as the same as the pretrained model and sasrec, "
     "so the length of this list should be mlp_layers_num - 2, e.g. [784 * 4, 784, 64]"
 )
 
+argparser.add_argument(
+    "--use_deep_prompt",
+    type=str,
+    default=args["use_deep_prompt"],
+    help=
+    "whether use deep prompt when input is text"
+)
+
+argparser.add_argument(
+    "--prefix_projection",
+    type=str,
+    default=args["prefix_projection"],
+    help=
+    "whether to use projection for prefix when input is text, only support 'no' and 'linear'"
+)
+
+argparser.add_argument(
+    "--prefix_hidden_size",
+    type=int,
+    default=args["prefix_hidden_size"],
+    help=
+    "hidden size of the projection when input is text and prefix_projection is True"
+)
+
+argparser.add_argument(
+    "--pre_seq_len",
+    type=int,
+    default=args["pre_seq_len"],
+    help="the length of the prefix when input is text and use deep prompt"
+)
+
+argparser.add_argument(
+    "--pooling_type",
+    type=str,
+    default=args["pooling_type"],
+    help=
+    "pooling_type method for the prefix when input is text and use deep prompt, only support 'mean' and 'last'"
+)
 
 args = argparser.parse_args()
 
-args.no_grad = True if args.no_grad == "yes" else False
-args.use_mlp_connect = True if args.use_mlp_connect == "yes" else False
+args.use_mlp_projection = True if args.use_mlp_projection == "yes" else False
+args.use_deep_prompt = True if args.use_deep_prompt == "yes" else False
+args.prefix_projection = True if args.prefix_projection == "nonlinear" else False
 
 dm = SeqDataModule(
     data_name=args.dataset,
     batch_size=args.batch_size,
-    pretrained_model=args.pretrained_model,
+    plm=args.plm,
     sasrec_seq_len=args.sasrec_seq_len,
     tokenized_len=args.tokenized_len,
     min_item_seq_len=args.min_item_seq_len,
@@ -220,9 +259,8 @@ model = SeqRecommender(
     item_token_num=num_items,
     sasrec_seq_len=args.sasrec_seq_len,
     num_unfreeze_layers=args.unfreeze,
-    no_grad=args.no_grad,
     input_type=args.input_type,
-    pretrained_model=args.pretrained_model,
+    plm=args.plm,
     n_layers=args.num_blocks,
     n_heads=args.num_heads,
     hidden_size=args.dim,
@@ -231,9 +269,14 @@ model = SeqRecommender(
     attention_dropout=args.dropout,
     layer_norm_eps=args.layer_norm_eps,
     initializer_range=0.02,
-    use_mlp_connect=args.use_mlp_connect,
+    use_mlp_projection=args.use_mlp_projection,
     mlp_layers_num=args.mlp_layers_num,
     mlp_inner_size=args.mlp_inner_size,
+    use_deep_prompt=args.use_deep_prompt,
+    prefix_projection=args.prefix_projection,
+    prefix_hidden_size=args.prefix_hidden_size,
+    pre_seq_len=args.pre_seq_len,
+    pooling_type=args.pooling_type,
 )
 
 
@@ -242,9 +285,9 @@ if args.input_type == "id":
     base_model_name = "EMB"
 elif args.input_type == "text":
     model_name = "SASRecWithText"
-    if args.pretrained_model.startswith("facebook"):
-        base_model_name = PRETRAIN_MODEL_ABBR[args.pretrained_model]
-    elif args.pretrained_model.startswith("google"):
+    if args.plm.startswith("facebook"):
+        base_model_name = PRETRAIN_MODEL_ABBR[args.plm]
+    elif args.plm.startswith("google"):
         base_model_name = "BERT"
     else:
         raise ValueError("Unknown backbone name")
@@ -279,7 +322,9 @@ trainer = Trainer(
     devices=args.devices,
     deterministic=True,
     callbacks=[checkpoint_callback, early_stop_callback],
-    # fast_dev_run=100,
+    profiler=profiler,
+    precision=16
+    # fast_dev_run=2,
 )
 
 trainer.fit(model, datamodule=dm)
