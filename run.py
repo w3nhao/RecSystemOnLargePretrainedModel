@@ -350,8 +350,7 @@ trainer = Trainer(
     deterministic=True,
     callbacks=[checkpoint_callback, early_stop_callback],
     precision=args.precision,
-    strategy="ddp" if len(args.devices) > 1 else None,
-    # find_unused_parameters=False,
+    strategy="ddp_find_unused_parameters_false" if len(args.devices) > 1 else None,
     # val_check_interval=0.25,
 )
 
