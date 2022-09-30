@@ -1,5 +1,6 @@
 
-from transformers import OPTModel, BertModel
+from transformers import BertModel
+from models.opt import OPTModel
 
 def get_plm_configs(plm):
     output_size = plm.config.word_embed_proj_dim

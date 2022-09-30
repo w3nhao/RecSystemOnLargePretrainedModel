@@ -1,4 +1,6 @@
 import argparse
+import torch 
+
 from datetime import datetime
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning import loggers as pl_loggers
@@ -7,7 +9,6 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from models.recommender import SeqRecommender
 from datamodules.datamodule import SeqDataModule, PRETRAIN_MODEL_ABBR
 from pytorch_lightning.profilers import PyTorchProfiler, AdvancedProfiler
-import torch.multiprocessing
 from transformers import logging
 from utils.pylogger import get_pylogger
 
@@ -56,6 +57,7 @@ args = {
     "mlp_inner_size": [3136, 784, 64],
     "num_workers": 0,
     "pooling_type": "mean",
+    "precision": 16,
 }
 
 argparser = argparse.ArgumentParser()
@@ -164,7 +166,7 @@ argparser.add_argument(
     "--unfreeze",
     type=int,
     default=args["unfreeze"],
-    help="unfreeze layers from the last, e.g. 1,2 or 0 for not unfreeze")
+    help="unfreeze layers from the last, e.g. 1,2 or 0 for not unfreeze, -1 for unfreeze all")
 
 argparser.add_argument(
     "--plm",
@@ -234,7 +236,8 @@ argparser.add_argument(
     type=str,
     default=args["pooling_type"],
     help=
-    "pooling_type method for the prefix when input is text and use deep prompt, only support 'mean' and 'last'"
+    "pooling_type method for the prefix when input is text and use deep prompt, "
+    "only support 'mean' and 'last'"
 )
 
 argparser.add_argument(
@@ -248,6 +251,12 @@ argparser.add_argument(
     type=int,
     default=args["post_seq_len"],
     help="the length of the postfix when input is text and use post prompt")
+
+argparser.add_argument(
+    "--precision",
+    type=int,
+    default=args["precision"],
+    help="precision of the model, only support 16 and 32")
 
 
 args = argparser.parse_args()
@@ -340,14 +349,20 @@ trainer = Trainer(
     devices=args.devices,
     deterministic=True,
     callbacks=[checkpoint_callback, early_stop_callback],
-    precision=16,
+    precision=args.precision,
     strategy="ddp" if len(args.devices) > 1 else None,
     # find_unused_parameters=False,
     # val_check_interval=0.25,
 )
 
-# trainer.fit(model, datamodule=dm)
-trainer.validate(model, datamodule=dm)
-# trainer.test(datamodule=dm, ckpt_path="best")
-
-print(args.devices)
+trainer.fit(model, datamodule=dm)
+# trainer.validate(model, datamodule=dm)
+if len(args.devices) == 1:
+    trainer.test(datamodule=dm, ckpt_path="best")
+elif len(args.devices) > 1:
+    ckpt_path = trainer.checkpoint_callback.best_model_path
+    test_logger = pl_loggers.CSVLogger(save_dir=f"logs/{devices_name}/{args.dataset}",
+                                    name=model_name,
+                                    version=version_name + "_test")
+    tester = Trainer(logger=test_logger, accelerator="gpu", devices=args.devices[0], deterministic=True, precision=32)
+    tester.test(model, ckpt_path=ckpt_path, datamodule=dm)

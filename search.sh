@@ -23,16 +23,17 @@ POST_SEQ_LEN=10
 NUM_WORKERS=6
 
 DATASET="MIND_large"
-INPUT_TYPE="id"
+INPUT_TYPE="text"
 POOLING_TYPE="last"
 PRETRAINED_MODEL="facebook/opt-125m"
 UNFREEZE=0
+PRESICION=16
 
-DEVICES="0"
+DEVICES="2 3 4 6 7"
 
 for lr in 1e-3
 do
-  for bs in 512
+  for bs in 64
   do
     python3 run.py --lr $lr \
                     --epochs $MAX_EPOCHS \
@@ -62,6 +63,7 @@ do
                     --pre_seq_len $PRE_SEQ_LEN \
                     --pooling_type $POOLING_TYPE \
                     --use_post_prompt $USE_POST_PROMPT \
-                    --post_seq_len $POST_SEQ_LEN 
+                    --post_seq_len $POST_SEQ_LEN \
+                    --precision $PRESICION 
   done
 done
