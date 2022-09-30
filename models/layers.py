@@ -7,7 +7,7 @@ from models.utils import get_plm_configs
 class PromptEncoder(torch.nn.Module):
     
     def __init__(self, plm, prompt_projection, prompt_seq_len, hidden_size,
-                 prompt_hidden_size, num_hidden_layers):
+                 prompt_hidden_size, num_hidden_layers, layer_norm_eps):
         super().__init__()
         
         _, plm_hidden_size, plm_n_layers, \
@@ -33,14 +33,13 @@ class PromptEncoder(torch.nn.Module):
             self.trans = torch.nn.Sequential(
                 torch.nn.Linear(hidden_size, prompt_hidden_size),
                 torch.nn.GELU(),
+                torch.nn.LayerNorm(prompt_hidden_size, layer_norm_eps),
                 torch.nn.Linear(prompt_hidden_size,
                                 num_hidden_layers * 2 * hidden_size))
         else:
             self.embedding = torch.nn.Embedding(
                 prompt_seq_len, num_hidden_layers * 2 * hidden_size)
 
-        # self.dropout = torch.nn.Dropout(plm_dropout_prob)
-        self.layernorm = torch.nn.LayerNorm(num_hidden_layers * 2 * hidden_size)
 
     def forward(self, batch_size):
         tokens = self.tokens.unsqueeze(0).expand(batch_size, -1)
@@ -54,8 +53,8 @@ class PromptEncoder(torch.nn.Module):
         past_key_values = past_key_values.view(batch_size, self.prompt_seq_len,
                                                self.plm_n_layers * 2, self.plm_n_heads,
                                                self.plm_n_embd)
+        
         # past_key_values = self.dropout(past_key_values)
-        past_key_values = self.layernorm(past_key_values)
         past_key_values = past_key_values.permute(2, 0, 3, 1, 4).split(2)
         
         return past_key_values

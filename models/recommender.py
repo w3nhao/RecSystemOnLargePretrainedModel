@@ -1,7 +1,3 @@
-from gc import unfreeze
-from importlib.util import module_for_loader
-from lib2to3.pgen2 import token
-from sys import prefix
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -91,10 +87,9 @@ class SeqRecommender(pl.LightningModule):
                 self.item_feature_extractor, num_unfreeze_layers)
 
             output_size, plm_hidden_size, plm_n_layers, \
-            _, _, plm_dropout_prob = get_plm_configs(self.item_feature_extractor)
+            _, _, _ = get_plm_configs(self.item_feature_extractor)
 
             if use_pre_prompt or use_post_prompt:
-
                 if use_pre_prompt:
                     self.prefix_encoder = PromptEncoder(
                         plm=self.item_feature_extractor,
@@ -103,6 +98,7 @@ class SeqRecommender(pl.LightningModule):
                         num_hidden_layers=plm_n_layers,
                         hidden_size=plm_hidden_size,
                         prompt_hidden_size=prompt_hidden_size,
+                        layer_norm_eps=layer_norm_eps
                     )
 
                 if use_post_prompt:
@@ -117,10 +113,12 @@ class SeqRecommender(pl.LightningModule):
                         num_hidden_layers=plm_n_layers,
                         hidden_size=plm_hidden_size,
                         prompt_hidden_size=prompt_hidden_size,
+                        layer_norm_eps=layer_norm_eps
                     )
                     self.last_query_embed = torch.nn.Parameter(
                         torch.randn(1, 1, plm_hidden_size))
-
+                self.after_pooling_layernorm = torch.nn.LayerNorm(plm_hidden_size, eps=layer_norm_eps)
+                
             if use_mlp_projection:
                 mlp_sizes = [output_size] + mlp_inner_size + [hidden_size]
                 assert mlp_layers_num > 2
@@ -295,6 +293,8 @@ class SeqRecommender(pl.LightningModule):
             else:
                 raise ValueError(
                     "pooling_type should be one of mean, last, mean_last")
+
+            item_embs = self.after_pooling_layernorm(item_embs)
 
             if self.use_mlp_projection:
                 item_embs = self.mlp_projection(item_embs)
