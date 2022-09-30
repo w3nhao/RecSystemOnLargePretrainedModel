@@ -2,38 +2,62 @@ import copy
 import math
 import torch
 import torch.nn as nn
+from models.utils import get_plm_configs
 
-
-class PrefixEncoder(torch.nn.Module):
-    r'''
-    The torch.nn model to encode the prefix
-
-    Input shape: (batch-size, prefix-length)
-
-    Output shape: (batch-size, prefix-length, 2*layers*hidden)
-    '''
-    def __init__(self, prefix_projection, pre_seq_len, hidden_size,
-                 prefix_hidden_size, num_hidden_layers):
+class PromptEncoder(torch.nn.Module):
+    
+    def __init__(self, plm, prompt_projection, prompt_seq_len, hidden_size,
+                 prompt_hidden_size, num_hidden_layers):
         super().__init__()
-        self.prefix_projection = prefix_projection
-        if self.prefix_projection:
-            # Use a two-layer MLP to encode the prefix
-            self.embedding = torch.nn.Embedding(pre_seq_len, hidden_size)
+        
+        _, plm_hidden_size, plm_n_layers, \
+        plm_n_heads, plm_n_embd, plm_dropout_prob = get_plm_configs(plm)
+        
+        self.plm_n_layers = plm_n_layers
+        self.plm_hidden_size = plm_hidden_size
+        self.plm_n_heads = plm_n_heads
+        self.plm_n_embd = plm_n_embd
+        self.plm_dropout_prob = plm_dropout_prob
+        self.prompt_projection = prompt_projection
+        self.prompt_hidden_size = prompt_hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.hidden_size = hidden_size
+        self.prompt_seq_len = prompt_seq_len
+        
+        self.register_buffer("tokens", torch.arange(self.prompt_seq_len).long())
+
+        self.prompt_projection = prompt_projection
+        if self.prompt_projection:
+            # Use a two-layer MLP to encode the prompt
+            self.embedding = torch.nn.Embedding(prompt_seq_len, hidden_size)
             self.trans = torch.nn.Sequential(
-                torch.nn.Linear(hidden_size, prefix_hidden_size),
-                torch.nn.Tanh(),
-                torch.nn.Linear(prefix_hidden_size,
+                torch.nn.Linear(hidden_size, prompt_hidden_size),
+                torch.nn.GELU(),
+                torch.nn.Linear(prompt_hidden_size,
                                 num_hidden_layers * 2 * hidden_size))
         else:
             self.embedding = torch.nn.Embedding(
-                pre_seq_len, num_hidden_layers * 2 * hidden_size)
+                prompt_seq_len, num_hidden_layers * 2 * hidden_size)
 
-    def forward(self, prefix: torch.Tensor):
-        if self.prefix_projection:
-            prefix_tokens = self.embedding(prefix)
+        # self.dropout = torch.nn.Dropout(plm_dropout_prob)
+        self.layernorm = torch.nn.LayerNorm(num_hidden_layers * 2 * hidden_size)
+
+    def forward(self, batch_size):
+        tokens = self.tokens.unsqueeze(0).expand(batch_size, -1)
+        
+        if self.prompt_projection:
+            prefix_tokens = self.embedding(tokens)
             past_key_values = self.trans(prefix_tokens)
         else:
-            past_key_values = self.embedding(prefix)
+            past_key_values = self.embedding(tokens)
+        
+        past_key_values = past_key_values.view(batch_size, self.prompt_seq_len,
+                                               self.plm_n_layers * 2, self.plm_n_heads,
+                                               self.plm_n_embd)
+        # past_key_values = self.dropout(past_key_values)
+        past_key_values = self.layernorm(past_key_values)
+        past_key_values = past_key_values.permute(2, 0, 3, 1, 4).split(2)
+        
         return past_key_values
 
 

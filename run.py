@@ -17,7 +17,7 @@ logging.set_verbosity_error()
 
 log = get_pylogger(__name__)
 
-profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
+# profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
 
 # import wandb
 # wandb.login
@@ -45,10 +45,12 @@ args = {
     "layer_norm_eps": 1e-6,
     "min_item_seq_len": 5,
     "max_item_seq_len": None,
-    "use_deep_prompt": "no",
-    "prefix_projection": "nonlinear",
-    "prefix_hidden_size": 128,
-    "pre_seq_len": 100,
+    "use_pre_prompt": "no",
+    "use_post_prompt": "no",
+    "prompt_projection": "nonlinear",
+    "prompt_hidden_size": 128,
+    "pre_seq_len": 20,
+    "post_seq_len": 20,
     "use_mlp_projection": "no",
     "mlp_layers_num": 4,
     "mlp_inner_size": [3136, 784, 64],
@@ -197,27 +199,27 @@ argparser.add_argument(
 )
 
 argparser.add_argument(
-    "--use_deep_prompt",
+    "--use_pre_prompt",
     type=str,
-    default=args["use_deep_prompt"],
+    default=args["use_pre_prompt"],
     help=
     "whether use deep prompt when input is text"
 )
 
 argparser.add_argument(
-    "--prefix_projection",
+    "--prompt_projection",
     type=str,
-    default=args["prefix_projection"],
+    default=args["prompt_projection"],
     help=
     "whether to use projection for prefix when input is text, only support 'no' and 'linear'"
 )
 
 argparser.add_argument(
-    "--prefix_hidden_size",
+    "--prompt_hidden_size",
     type=int,
-    default=args["prefix_hidden_size"],
+    default=args["prompt_hidden_size"],
     help=
-    "hidden size of the projection when input is text and prefix_projection is True"
+    "hidden size of the projection when input is text and prompt_projection is True"
 )
 
 argparser.add_argument(
@@ -235,11 +237,25 @@ argparser.add_argument(
     "pooling_type method for the prefix when input is text and use deep prompt, only support 'mean' and 'last'"
 )
 
+argparser.add_argument(
+    "--use_post_prompt",
+    type=str,
+    default=args["use_post_prompt"],
+    help="whether use postfix as prompt when input is text")
+
+argparser.add_argument(
+    "--post_seq_len",
+    type=int,
+    default=args["post_seq_len"],
+    help="the length of the postfix when input is text and use post prompt")
+
+
 args = argparser.parse_args()
 
 args.use_mlp_projection = True if args.use_mlp_projection == "yes" else False
-args.use_deep_prompt = True if args.use_deep_prompt == "yes" else False
-args.prefix_projection = True if args.prefix_projection == "nonlinear" else False
+args.use_pre_prompt = True if args.use_pre_prompt == "yes" else False
+args.use_post_prompt = True if args.use_post_prompt == "yes" else False
+args.prompt_projection = True if args.prompt_projection == "nonlinear" else False
 
 dm = SeqDataModule(
     data_name=args.dataset,
@@ -272,11 +288,13 @@ model = SeqRecommender(
     use_mlp_projection=args.use_mlp_projection,
     mlp_layers_num=args.mlp_layers_num,
     mlp_inner_size=args.mlp_inner_size,
-    use_deep_prompt=args.use_deep_prompt,
-    prefix_projection=args.prefix_projection,
-    prefix_hidden_size=args.prefix_hidden_size,
+    use_pre_prompt=args.use_pre_prompt,
+    use_post_prompt=args.use_post_prompt,
+    prompt_projection=args.prompt_projection,
+    prompt_hidden_size=args.prompt_hidden_size,
     pre_seq_len=args.pre_seq_len,
     pooling_type=args.pooling_type,
+    post_seq_len=args.post_seq_len,
 )
 
 
@@ -322,10 +340,14 @@ trainer = Trainer(
     devices=args.devices,
     deterministic=True,
     callbacks=[checkpoint_callback, early_stop_callback],
-    profiler=profiler,
-    precision=16
-    # fast_dev_run=2,
+    precision=16,
+    strategy="ddp" if len(args.devices) > 1 else None,
+    # find_unused_parameters=False,
+    # val_check_interval=0.25,
 )
 
-trainer.fit(model, datamodule=dm)
-trainer.test(datamodule=dm, ckpt_path="best")
+# trainer.fit(model, datamodule=dm)
+trainer.validate(model, datamodule=dm)
+# trainer.test(datamodule=dm, ckpt_path="best")
+
+print(args.devices)

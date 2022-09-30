@@ -673,6 +673,7 @@ class OPTDecoder(OPTPreTrainedModel):
             attention_mask = torch.ones(inputs_embeds.shape[:2],
                                         dtype=torch.bool,
                                         device=inputs_embeds.device)
+
         pos_embeds = self.embed_positions(attention_mask,
                                           past_key_values_length)
 
@@ -681,9 +682,8 @@ class OPTDecoder(OPTPreTrainedModel):
 
         if self.project_in is not None:
             inputs_embeds = self.project_in(inputs_embeds)
-
         hidden_states = inputs_embeds + pos_embeds
-
+        
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
