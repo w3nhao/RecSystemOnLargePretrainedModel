@@ -4,7 +4,20 @@ import torch
 import torch.nn as nn
 from models.utils import get_plm_configs
 
-class PromptEncoder(torch.nn.Module):
+class PromptEncoder(nn.Module):
+    def __init__(self, plm, prompt_seq_len):
+        super().__init__()
+        hidden_size = plm.config.hidden_size
+        self.prompt_seq_len = prompt_seq_len
+        self.register_buffer("tokens", torch.arange(self.prompt_seq_len).long())
+        self.embedding = nn.Embedding(self.prompt_seq_len, hidden_size)
+
+    def forward(self, batch_size):
+        tokens = self.tokens.unsqueeze(0).expand(batch_size, -1)
+        return self.embedding(tokens)
+
+
+class DeepPromptEncoder(nn.Module):
     
     def __init__(self, plm, prompt_projection, prompt_seq_len, hidden_size,
                  prompt_hidden_size, num_hidden_layers, layer_norm_eps):
@@ -29,15 +42,15 @@ class PromptEncoder(torch.nn.Module):
         self.prompt_projection = prompt_projection
         if self.prompt_projection:
             # Use a two-layer MLP to encode the prompt
-            self.embedding = torch.nn.Embedding(prompt_seq_len, hidden_size)
-            self.trans = torch.nn.Sequential(
-                torch.nn.Linear(hidden_size, prompt_hidden_size),
-                torch.nn.GELU(),
-                torch.nn.LayerNorm(prompt_hidden_size, layer_norm_eps),
-                torch.nn.Linear(prompt_hidden_size,
+            self.embedding = nn.Embedding(prompt_seq_len, hidden_size)
+            self.trans = nn.Sequential(
+                nn.Linear(hidden_size, prompt_hidden_size),
+                nn.GELU(),
+                nn.LayerNorm(prompt_hidden_size, layer_norm_eps),
+                nn.Linear(prompt_hidden_size,
                                 num_hidden_layers * 2 * hidden_size))
         else:
-            self.embedding = torch.nn.Embedding(
+            self.embedding = nn.Embedding(
                 prompt_seq_len, num_hidden_layers * 2 * hidden_size)
 
 
@@ -139,16 +152,16 @@ class MultiHeadAttention(nn.Module):
         return hidden_states
 
 
-class PointWiseFeedForward(torch.nn.Module):
+class PointWiseFeedForward(nn.Module):
 
     def __init__(self, hidden_size, inner_size, dropout_rate, layer_norm_eps):
 
         super(PointWiseFeedForward, self).__init__()
 
-        self.conv1 = torch.nn.Conv1d(hidden_size, inner_size, kernel_size=1)
-        self.relu = torch.nn.GELU()
-        self.dropout1 = torch.nn.Dropout(dropout_rate)
-        self.conv2 = torch.nn.Conv1d(inner_size, hidden_size, kernel_size=1)
+        self.conv1 = nn.Conv1d(hidden_size, inner_size, kernel_size=1)
+        self.relu = nn.GELU()
+        self.dropout1 = nn.Dropout(dropout_rate)
+        self.conv2 = nn.Conv1d(inner_size, hidden_size, kernel_size=1)
         self.LayerNorm = nn.LayerNorm(hidden_size, eps=layer_norm_eps)
 
     def forward(self, inputs):

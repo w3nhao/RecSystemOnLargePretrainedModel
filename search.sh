@@ -2,38 +2,40 @@ OBJECTIVE="test_HR@10"
 
 MAX_EPOCHS=300
 EARLY_STOPPING=10
-DIM=16
+TOKENIZED_LEN=30
+NUM_WORKERS=6
+MIN_ITEM_SEQ_LEN=5
+MAX_ITEM_SEQ_LEN="None"
+
+# sasrec
+DIM=256
 DROPOUT=0.5
 SASREC_SEQ_LEN=20
 NUM_BLOCKS=2
 NUM_HEADS=2
-TOKENIZED_LEN=30
 LAYER_NORM_EPS=1e-6
-MIN_ITEM_SEQ_LEN=5
-MAX_ITEM_SEQ_LEN="None"
 USE_MLP_PROJECTION="no"
 MLP_LAYERS_NUM=4
 MLP_INNER_SIZE="3136 784 64"
-USE_PRE_PROMPT="no"
-USE_POST_PROMPT="yes"
+
+# prompt
+PRE_SEQ_LEN=0
+POST_SEQ_LEN=0
+LAST_QUERY_LEN=0
 PROMPT_PROJECTION="nonlinear"
-PROMPT_HIDDEN_SIZE=128
-PRE_SEQ_LEN=20
-POST_SEQ_LEN=10
-NUM_WORKERS=6
+PROMPT_HIDDEN_SIZE=256
 
 DATASET="MIND_large"
 INPUT_TYPE="text"
-POOLING_TYPE="last"
-PRETRAINED_MODEL="facebook/opt-125m"
-UNFREEZE=0
-PRESICION=16
+POOLING_TYPE="mean"
+PRETRAINED_MODEL="facebook/opt-1.3b"
+UNFREEZE=2
 
-DEVICES="2 3 4 6 7"
+DEVICES="1 2 3 4 5 6 7"
 
-for lr in 1e-3
+for lr in 3e-4
 do
-  for bs in 64
+  for bs in 192
   do
     python3 run.py --lr $lr \
                     --epochs $MAX_EPOCHS \
@@ -57,13 +59,11 @@ do
                     --use_mlp_projection $USE_MLP_PROJECTION \
                     --mlp_layers_num $MLP_LAYERS_NUM \
                     --mlp_inner_size $MLP_INNER_SIZE  \
-                    --use_pre_prompt $USE_PRE_PROMPT \
                     --prompt_projection $PROMPT_PROJECTION \
                     --prompt_hidden_size $PROMPT_HIDDEN_SIZE \
                     --pre_seq_len $PRE_SEQ_LEN \
                     --pooling_type $POOLING_TYPE \
-                    --use_post_prompt $USE_POST_PROMPT \
                     --post_seq_len $POST_SEQ_LEN \
-                    --precision $PRESICION 
+                    --last_query_len $LAST_QUERY_LEN
   done
 done

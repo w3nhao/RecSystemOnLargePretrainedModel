@@ -52,6 +52,7 @@ args = {
     "prompt_hidden_size": 128,
     "pre_seq_len": 20,
     "post_seq_len": 20,
+    "last_query_len": 1,
     "use_mlp_projection": "no",
     "mlp_layers_num": 4,
     "mlp_inner_size": [3136, 784, 64],
@@ -201,14 +202,6 @@ argparser.add_argument(
 )
 
 argparser.add_argument(
-    "--use_pre_prompt",
-    type=str,
-    default=args["use_pre_prompt"],
-    help=
-    "whether use deep prompt when input is text"
-)
-
-argparser.add_argument(
     "--prompt_projection",
     type=str,
     default=args["prompt_projection"],
@@ -241,12 +234,6 @@ argparser.add_argument(
 )
 
 argparser.add_argument(
-    "--use_post_prompt",
-    type=str,
-    default=args["use_post_prompt"],
-    help="whether use postfix as prompt when input is text")
-
-argparser.add_argument(
     "--post_seq_len",
     type=int,
     default=args["post_seq_len"],
@@ -258,12 +245,18 @@ argparser.add_argument(
     default=args["precision"],
     help="precision of the model, only support 16 and 32")
 
+argparser.add_argument(
+    "--last_query_len",
+    type=int,
+    default=args["last_query_len"],
+    help=
+    "the length of the last query when input is text and use post prompt, "
+    "only support 1 and 2"
+)
 
 args = argparser.parse_args()
 
 args.use_mlp_projection = True if args.use_mlp_projection == "yes" else False
-args.use_pre_prompt = True if args.use_pre_prompt == "yes" else False
-args.use_post_prompt = True if args.use_post_prompt == "yes" else False
 args.prompt_projection = True if args.prompt_projection == "nonlinear" else False
 
 dm = SeqDataModule(
@@ -297,13 +290,12 @@ model = SeqRecommender(
     use_mlp_projection=args.use_mlp_projection,
     mlp_layers_num=args.mlp_layers_num,
     mlp_inner_size=args.mlp_inner_size,
-    use_pre_prompt=args.use_pre_prompt,
-    use_post_prompt=args.use_post_prompt,
     prompt_projection=args.prompt_projection,
     prompt_hidden_size=args.prompt_hidden_size,
     pre_seq_len=args.pre_seq_len,
     pooling_type=args.pooling_type,
     post_seq_len=args.post_seq_len,
+    last_query_len=args.last_query_len,
 )
 
 
@@ -351,6 +343,7 @@ trainer = Trainer(
     callbacks=[checkpoint_callback, early_stop_callback],
     precision=args.precision,
     strategy="ddp_find_unused_parameters_false" if len(args.devices) > 1 else None,
+    # strategy="ddp" if len(args.devices) > 1 else None,
     # val_check_interval=0.25,
 )
 
@@ -363,5 +356,5 @@ elif len(args.devices) > 1:
     test_logger = pl_loggers.CSVLogger(save_dir=f"logs/{devices_name}/{args.dataset}",
                                     name=model_name,
                                     version=version_name + "_test")
-    tester = Trainer(logger=test_logger, accelerator="gpu", devices=args.devices[0], deterministic=True, precision=32)
+    tester = Trainer(logger=test_logger, accelerator="gpu", devices=[args.devices[0]], deterministic=True, precision=32)
     tester.test(model, ckpt_path=ckpt_path, datamodule=dm)

@@ -3,7 +3,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 from torchmetrics import MetricCollection
 from models.sasrec import SASRec
-from models.layers import PromptEncoder
+from models.layers import PromptEncoder, DeepPromptEncoder
 from transformers import BertModel
 from models.utils import get_plm_configs, get_plm_model, freeze_plm_layers
 from utils.pylogger import get_pylogger
@@ -12,6 +12,7 @@ from utils.metrics import MRR, NDCG, HR, get_topk_ranks
 log = get_pylogger(__name__)
 
 METRIC_LIST = ["MRR", "NDCG", "HR"]
+
 
 class SeqRecommender(pl.LightningModule):
 
@@ -25,6 +26,7 @@ class SeqRecommender(pl.LightningModule):
         prompt_hidden_size,
         pre_seq_len,
         post_seq_len,
+        last_query_len,
         num_unfreeze_layers,
         lr,
         n_layers,
@@ -38,8 +40,6 @@ class SeqRecommender(pl.LightningModule):
         mlp_layers_num,
         mlp_inner_size,
         pooling_type="mean",
-        use_pre_prompt=False,
-        use_post_prompt=False,
         use_mlp_projection=False,
         top_k_list=[5, 10, 20],
     ):
@@ -52,11 +52,10 @@ class SeqRecommender(pl.LightningModule):
         self.plm = plm
         self.num_unfreeze_layers = num_unfreeze_layers
 
-        self.use_pre_prompt = use_pre_prompt
-        self.use_post_prompt = use_post_prompt
         self.prompt_projection = prompt_projection
         self.pre_seq_len = pre_seq_len
         self.post_seq_len = post_seq_len
+        self.last_query_len = last_query_len
         self.prompt_hidden_size = prompt_hidden_size
         self.pooling_type = pooling_type
         self.use_mlp_projection = use_mlp_projection
@@ -89,36 +88,60 @@ class SeqRecommender(pl.LightningModule):
             output_size, plm_hidden_size, plm_n_layers, \
             _, _, _ = get_plm_configs(self.item_feature_extractor)
 
-            if use_pre_prompt or use_post_prompt:
-                if use_pre_prompt:
-                    self.prefix_encoder = PromptEncoder(
+            assert pre_seq_len >= 0 and post_seq_len >= 0 and last_query_len >= 0
+
+            if pre_seq_len > 0 or post_seq_len > 0:
+                if pre_seq_len > 0:
+                    self.prefix_encoder = DeepPromptEncoder(
                         plm=self.item_feature_extractor,
                         prompt_projection=prompt_projection,
                         prompt_seq_len=pre_seq_len,
                         num_hidden_layers=plm_n_layers,
                         hidden_size=plm_hidden_size,
                         prompt_hidden_size=prompt_hidden_size,
-                        layer_norm_eps=layer_norm_eps
-                    )
+                        layer_norm_eps=layer_norm_eps)
 
-                if use_post_prompt:
+                if post_seq_len > 0:
                     if isinstance(self.item_feature_extractor, BertModel):
                         raise NotImplementedError(
                             "post prompt is not supported for bert.")
 
-                    self.postfix_encoder = PromptEncoder(
+                    self.postfix_encoder = DeepPromptEncoder(
                         plm=self.item_feature_extractor,
                         prompt_projection=prompt_projection,
                         prompt_seq_len=post_seq_len,
                         num_hidden_layers=plm_n_layers,
                         hidden_size=plm_hidden_size,
                         prompt_hidden_size=prompt_hidden_size,
-                        layer_norm_eps=layer_norm_eps
-                    )
-                    self.last_query_embed = torch.nn.Parameter(
-                        torch.randn(1, 1, plm_hidden_size))
-                self.after_pooling_layernorm = torch.nn.LayerNorm(plm_hidden_size, eps=layer_norm_eps)
-                
+                        layer_norm_eps=layer_norm_eps)
+
+                    self.last_query_encoder = PromptEncoder(
+                        self.item_feature_extractor,
+                        prompt_seq_len=last_query_len)
+
+                elif last_query_len >= 1:
+                    if isinstance(self.item_feature_extractor, BertModel):
+                        raise NotImplementedError(
+                            "post prompt is not supported for bert.")
+
+                    self.last_query_encoder = PromptEncoder(
+                            self.item_feature_extractor,
+                            prompt_seq_len=last_query_len)
+
+            if pooling_type == "mean_last":
+                self.fusion_mlp = torch.nn.Sequential(
+                    torch.nn.Linear(plm_hidden_size * 2, plm_hidden_size),
+                    torch.nn.ReLU(),
+                    torch.nn.LayerNorm(plm_hidden_size,
+                                        eps=layer_norm_eps),
+                    torch.nn.Linear(plm_hidden_size, plm_hidden_size),
+                    torch.nn.ReLU(),
+                    torch.nn.LayerNorm(plm_hidden_size,
+                                        eps=layer_norm_eps))
+            else:
+                self.after_pooling_layernorm = torch.nn.LayerNorm(
+                    plm_hidden_size, eps=layer_norm_eps)
+
             if use_mlp_projection:
                 mlp_sizes = [output_size] + mlp_inner_size + [hidden_size]
                 assert mlp_layers_num > 2
@@ -204,7 +227,7 @@ class SeqRecommender(pl.LightningModule):
             sentence_len = tokenized_ids.shape[1]
 
             output = None
-            if self.use_pre_prompt:
+            if self.pre_seq_len > 0:
                 past_key_values = self.prefix_encoder(plm_batch_size)
                 prefix_attention_mask = torch.ones(
                     plm_batch_size, self.pre_seq_len).type_as(attention_mask)
@@ -216,13 +239,14 @@ class SeqRecommender(pl.LightningModule):
                     past_key_values=past_key_values,
                 )
 
-            if self.use_post_prompt:
-                if output is None:
-                    output = self.item_feature_extractor(
-                        input_ids=tokenized_ids, attention_mask=attention_mask)
-                    prompt_attention_mask = attention_mask
-                past_key_values = output.past_key_values
-                
+            if output is None:
+                output = self.item_feature_extractor(
+                    input_ids=tokenized_ids, attention_mask=attention_mask)
+                prompt_attention_mask = attention_mask
+
+            past_key_values = output.past_key_values
+
+            if self.post_seq_len > 0:
                 prompt_key_values = self.postfix_encoder(plm_batch_size)
                 new_past_key_values = []
                 for past_key_value, prompt_key_value in zip(
@@ -235,21 +259,30 @@ class SeqRecommender(pl.LightningModule):
 
                 post_fix_attention_mask = torch.ones(plm_batch_size,
                                                      self.post_seq_len +
-                                                     1).type_as(attention_mask)
+                                                     self.last_query_len).type_as(attention_mask)
                 prompt_attention_mask = torch.cat(
                     (prompt_attention_mask, post_fix_attention_mask), dim=1)
 
-                last_query_embeds = self.last_query_embed.expand(
-                    plm_batch_size, -1, -1)
-                last_query = self.item_feature_extractor(
-                    inputs_embeds=last_query_embeds,
+                last_embeds = self.last_query_encoder(plm_batch_size)
+                last_token_emb = self.item_feature_extractor(
+                    inputs_embeds=last_embeds,
                     attention_mask=prompt_attention_mask,
                     past_key_values=new_past_key_values,
                 )
+            
+            elif self.last_query_len > 0:
+                post_fix_attention_mask = torch.ones(plm_batch_size,
+                                                     self.post_seq_len +
+                                                     self.last_query_len).type_as(attention_mask)
+                prompt_attention_mask = torch.cat(
+                    (prompt_attention_mask, post_fix_attention_mask), dim=1)
 
-            else:
-                output = self.item_feature_extractor(
-                    input_ids=tokenized_ids, attention_mask=attention_mask)
+                last_query_embeds = self.last_query_encoder(plm_batch_size)
+                last_token_emb = self.item_feature_extractor(
+                    inputs_embeds=last_query_embeds,
+                    attention_mask=prompt_attention_mask,
+                    past_key_values=past_key_values,
+                )
 
             sentence_embs = output.last_hidden_state  # (B * L_sas, L_plm, H_plm)
 
@@ -261,8 +294,10 @@ class SeqRecommender(pl.LightningModule):
                 num_mask = torch.clamp(attn_mask_expanded.sum(1), min=1e-9)
                 item_embs = sum_embs / num_mask  # (B * L_sas, H_plm)
 
+                item_embs = self.after_pooling_layernorm(item_embs)
+
             elif self.pooling_type == "last":
-                if not self.use_post_prompt:
+                if self.post_seq_len == 0 and self.last_query_len == 0:
                     # last pooling
                     last_token_idx = attention_mask.sum(dim=1) - 1
                     cumsum_idx = torch.tensor(sentence_len).expand(
@@ -271,8 +306,10 @@ class SeqRecommender(pl.LightningModule):
                     item_embs = sentence_embs.view(
                         -1, sentence_embs.size(-1))[last_token_idx]
                 else:
-                    last_query_embs = last_query.last_hidden_state
-                    item_embs = last_query_embs[:, 0, :]
+                    last_embs = last_token_emb.last_hidden_state
+                    item_embs = last_embs[:, -1, :]
+
+                item_embs = self.after_pooling_layernorm(item_embs)
 
             elif self.pooling_type == "mean_last":
                 # mean pooling
@@ -281,6 +318,7 @@ class SeqRecommender(pl.LightningModule):
                 sum_embs = (sentence_embs * attn_mask_expanded).sum(1)
                 num_mask = torch.clamp(attn_mask_expanded.sum(1), min=1e-9)
                 mean_item_embs = sum_embs / num_mask  # (B * L_sas, H_plm)
+
                 # last pooling
                 last_token_idx = attention_mask.sum(dim=1) - 1
                 cumsum_idx = torch.tensor(sentence_len).expand(
@@ -288,13 +326,13 @@ class SeqRecommender(pl.LightningModule):
                 last_token_idx[1:] += cumsum_idx[:-1]
                 last_item_embs = sentence_embs.view(
                     -1, sentence_embs.size(-1))[last_token_idx]
+
                 item_embs = torch.cat((mean_item_embs, last_item_embs), dim=1)
+                item_embs = self.fusion_mlp(item_embs)
 
             else:
                 raise ValueError(
                     "pooling_type should be one of mean, last, mean_last")
-
-            item_embs = self.after_pooling_layernorm(item_embs)
 
             if self.use_mlp_projection:
                 item_embs = self.mlp_projection(item_embs)
