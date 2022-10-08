@@ -4,12 +4,15 @@ import torch
 import torch.nn as nn
 from models.utils import get_plm_configs
 
+
 class PromptEncoder(nn.Module):
+
     def __init__(self, plm, prompt_seq_len):
         super().__init__()
         hidden_size = plm.config.hidden_size
         self.prompt_seq_len = prompt_seq_len
-        self.register_buffer("tokens", torch.arange(self.prompt_seq_len).long())
+        self.register_buffer("tokens",
+                             torch.arange(self.prompt_seq_len).long())
         self.embedding = nn.Embedding(self.prompt_seq_len, hidden_size)
 
     def forward(self, batch_size):
@@ -18,58 +21,56 @@ class PromptEncoder(nn.Module):
 
 
 class DeepPromptEncoder(nn.Module):
-    
-    def __init__(self, plm, prompt_projection, prompt_seq_len, hidden_size,
-                 prompt_hidden_size, num_hidden_layers, layer_norm_eps):
+
+    def __init__(self, plm, prompt_projection, prompt_seq_len,
+                 prompt_hidden_size, layer_norm_eps):
         super().__init__()
-        
+
         _, plm_hidden_size, plm_n_layers, \
         plm_n_heads, plm_n_embd, plm_dropout_prob = get_plm_configs(plm)
-        
-        self.plm_n_layers = plm_n_layers
-        self.plm_hidden_size = plm_hidden_size
+
         self.plm_n_heads = plm_n_heads
         self.plm_n_embd = plm_n_embd
         self.plm_dropout_prob = plm_dropout_prob
         self.prompt_projection = prompt_projection
         self.prompt_hidden_size = prompt_hidden_size
-        self.num_hidden_layers = num_hidden_layers
-        self.hidden_size = hidden_size
+        self.plm_n_layers = plm_n_layers
+        self.plm_hidden_size = plm_hidden_size
         self.prompt_seq_len = prompt_seq_len
-        
-        self.register_buffer("tokens", torch.arange(self.prompt_seq_len).long())
+
+        self.register_buffer("tokens",
+                             torch.arange(self.prompt_seq_len).long())
 
         self.prompt_projection = prompt_projection
         if self.prompt_projection:
             # Use a two-layer MLP to encode the prompt
-            self.embedding = nn.Embedding(prompt_seq_len, hidden_size)
+            self.embedding = nn.Embedding(prompt_seq_len, plm_hidden_size)
             self.trans = nn.Sequential(
-                nn.Linear(hidden_size, prompt_hidden_size),
-                nn.GELU(),
+                nn.Linear(plm_hidden_size, prompt_hidden_size), nn.GELU(),
                 nn.LayerNorm(prompt_hidden_size, layer_norm_eps),
                 nn.Linear(prompt_hidden_size,
-                                num_hidden_layers * 2 * hidden_size))
+                          plm_n_layers * 2 * plm_hidden_size))
         else:
-            self.embedding = nn.Embedding(
-                prompt_seq_len, num_hidden_layers * 2 * hidden_size)
-
+            self.embedding = nn.Embedding(prompt_seq_len,
+                                          plm_n_layers * 2 * plm_hidden_size)
 
     def forward(self, batch_size):
         tokens = self.tokens.unsqueeze(0).expand(batch_size, -1)
-        
+
         if self.prompt_projection:
             prefix_tokens = self.embedding(tokens)
             past_key_values = self.trans(prefix_tokens)
         else:
             past_key_values = self.embedding(tokens)
-        
+
         past_key_values = past_key_values.view(batch_size, self.prompt_seq_len,
-                                               self.plm_n_layers * 2, self.plm_n_heads,
+                                               self.plm_n_layers * 2,
+                                               self.plm_n_heads,
                                                self.plm_n_embd)
-        
+
         # past_key_values = self.dropout(past_key_values)
         past_key_values = past_key_values.permute(2, 0, 3, 1, 4).split(2)
-        
+
         return past_key_values
 
 

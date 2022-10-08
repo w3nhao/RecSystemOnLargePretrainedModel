@@ -1,16 +1,12 @@
 import os
 import numpy as np
 import pandas as pd
-from utils.pylogger import get_pylogger
-
 from transformers import GPT2Tokenizer, BertTokenizer
 
 ITEM_ID_SEQ_FIELD = "input_seqs"
 TARGET_FIELD = "targets"
 TEXT_ID_SEQ_FIELD = "tokenized_ids"
 ATTENTION_MASK_FIELD = "attention_mask"
-
-log = get_pylogger(__name__)
 
 
 def str_fields2ndarray(df, fields, field_len, dtype=np.int64):
@@ -123,12 +119,12 @@ class DataPreporcessor:
             "targets": targets
         })
 
-    def prepare_items(self, plm, tokenized_len):
+    def prepare_items(self, plm_name, tokenized_len):
         """Prepare items data"""
-        if plm.startswith("facebook/opt"):
-            tokenizer = GPT2Tokenizer.from_pretrained(plm)
-        elif plm.startswith("bert"):
-            tokenizer = BertTokenizer.from_pretrained(plm)
+        if plm_name.startswith("facebook/opt"):
+            tokenizer = GPT2Tokenizer.from_pretrained(plm_name)
+        elif plm_name.startswith("bert"):
+            tokenizer = BertTokenizer.from_pretrained(plm_name)
         else:
             raise NotImplementedError
 
@@ -228,11 +224,13 @@ class DataPreporcessor:
                 index=False,
                 encoding="utf-8",
             )
-     
+
     def save_items(self, save_dir, tokenizer_abbr):
         if self.item_table in self.processed_df:
             self.processed_df[self.item_table].to_csv(
-                os.path.join(save_dir, f"{self.item_table}_{tokenizer_abbr}.processed.tsv"),
+                os.path.join(
+                    save_dir,
+                    f"{self.item_table}_{tokenizer_abbr}.processed.tsv"),
                 sep="\t",
                 index=False,
                 encoding="utf-8",

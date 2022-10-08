@@ -1,5 +1,8 @@
 import numpy as np
 from torch.utils.data import Dataset
+from utils.pylogger import get_pylogger
+
+log = get_pylogger(__name__)
 
 
 class TextSeqRecDataset(Dataset):

@@ -1,11 +1,15 @@
-def get_configs(data_name):
+from dataclasses import dataclass
+from typing import Optional
+
+
+def get_data_configs(dataset):
     uid_field = "user_id"
     iid_field = "item_id"
     item_text_field = "item_text"
     item_seq_field = "interactions"
 
-    if data_name in ["MIND_small", "MIND_large"]:
-        data_dir = f"data/{data_name}/"
+    if dataset.lower() in ["mind_small", "mind_large"]:
+        data_dir = f"data/{dataset}/"
         inter_table = "behaviors"
         item_table = "news"
 
@@ -15,7 +19,7 @@ def get_configs(data_name):
         old_item_seq_field = "behaviors"
 
     else:
-        raise ValueError("data_name must be in ['MIND_small', 'MIND_large']")
+        raise ValueError("dataset must be in ['MIND_small', 'MIND_large']")
 
     table_configs = {
         inter_table: {
@@ -58,3 +62,25 @@ def get_configs(data_name):
     data_configs.update({"table_configs": table_configs})
 
     return data_configs
+
+
+@dataclass
+class SeqRecDataModuleConfig:
+    dataset: str
+    plm_name: str
+    min_item_seq_len: int = 5
+    max_item_seq_len: Optional[int] = None
+    sasrec_seq_len: int = 20
+    tokenized_len: int = 20
+    batch_size: int = 64
+    num_workers: int = 6
+    pin_memory: bool = False
+
+    def __post_init__(self):
+        assert self.min_item_seq_len > 0
+        assert self.tokenized_len > 0
+        assert self.sasrec_seq_len > 0
+        if self.max_item_seq_len is not None:
+            assert self.max_item_seq_len > 0
+            assert self.max_item_seq_len >= self.min_item_seq_len
+
