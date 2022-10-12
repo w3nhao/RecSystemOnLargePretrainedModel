@@ -13,7 +13,8 @@ from utils.schedule_functions import get_lr_scheduler_function
 from models.sasrec import SASRec
 from models.opt import OPTModel
 from models.layers import PromptEncoder, DeepPromptEncoder
-from models.configs import OPTSeqRecConfig, BERTSeqRecConfig, OPTPromptSeqRecConfig, BERTPromptSeqRecConfig, SeqRecConfig, TextSeqRecConfig
+from models.configs import (OPTSeqRecConfig, BERTSeqRecConfig, OPTPromptSeqRecConfig, 
+                            BERTPromptSeqRecConfig, SeqRecConfig, TextSeqRecConfig)
 from models.utils import gather_indexes, mean_pooling, last_pooling
 
 log = get_pylogger(__name__)
@@ -180,7 +181,9 @@ class SeqRec(pl.LightningModule, ABC):
     def configure_optimizers(self):
         lr = self.hparams.config.lr
         wd = self.hparams.config.weight_decay
-        optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=wd)
+        optimizer = torch.optim.AdamW(self.parameters(),
+                                      lr=lr,
+                                      weight_decay=wd)
         return optimizer
 
 
@@ -190,7 +193,6 @@ class IDSeqRec(SeqRec):
         self.save_hyperparameters()
         super().__init__(self.hparams.config)
 
-        
         # parameters initialization
         self.apply(self._init_weights)
 
@@ -233,8 +235,7 @@ class TextSeqRec(SeqRec, ABC):
                 nn.Sequential(
                     nn.Linear(projection_sizes[i], projection_sizes[i + 1]),
                     # nn.GELU()
-                    )
-                )
+                ))
         # self.projection.append(nn.LayerNorm(hidden_size, eps=layer_norm_eps))
 
     @abstractmethod
@@ -301,27 +302,29 @@ class OPTSeqRec(TextSeqRec):
         if self.hparams.config.plm_n_unfreeze_layers == 0:
             with torch.no_grad():
                 output = self.opt(input_ids=tokenized_ids,
-                                attention_mask=attention_mask)
+                                  attention_mask=attention_mask)
         else:
             output = self.opt(input_ids=tokenized_ids,
-                                attention_mask=attention_mask)
+                              attention_mask=attention_mask)
         # (B * L_sas, L_plm, H_plm)
         sentence_embs = output.last_hidden_state
         pooling_method = self.hparams.config.pooling_method
         if pooling_method == "mean":
             # (B * L_sas, H_plm)
-            item_embs = mean_pooling(sentence_embs, attention_mask).type_as(sentence_embs)
+            item_embs = mean_pooling(sentence_embs,
+                                     attention_mask).type_as(sentence_embs)
         elif pooling_method == "last":
             # (B * L_sas, H_plm)
-            item_embs = last_pooling(sentence_embs, attention_mask).type_as(sentence_embs)
+            item_embs = last_pooling(sentence_embs,
+                                     attention_mask).type_as(sentence_embs)
         return item_embs
-    
+
     def _set_opt_lr(self, lr, decay, wd):
         tuning_params = []
         n_layers = self.opt.config.num_hidden_layers
-        lrs = [lr * (decay ** (n_layers - i)) for i in range(n_layers)] 
+        lrs = [lr * (decay**(n_layers - i)) for i in range(n_layers)]
         no_weight_decay = ["bias", "LayerNorm.weight"]
-        
+
         for name, params in self.opt.named_parameters():
             if name.startswith("decoder.layers"):
                 layer_idx = int(name.split(".")[2])
@@ -336,28 +339,40 @@ class OPTSeqRec(TextSeqRec):
                 p.update(weight_decay=wd)
             tuning_params.append(p)
 
-        tuning_params = [layer for layer in tuning_params if layer["params"].requires_grad]
+        tuning_params = [
+            layer for layer in tuning_params if layer["params"].requires_grad
+        ]
         return tuning_params
 
     def configure_optimizers(self):
         lr = self.hparams.config.lr
         wd = self.hparams.config.weight_decay
         if self.hparams.config.plm_n_unfreeze_layers == 0:
-            optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=wd)
+            optimizer = torch.optim.AdamW(self.parameters(),
+                                          lr=lr,
+                                          weight_decay=wd)
         else:
             plm_lr = self.hparams.config.plm_lr
             layer_decay = self.hparams.config.plm_lr_layer_decay
             # set different learning rate for different layers
             opt_tuning_params = self._set_opt_lr(plm_lr, layer_decay, wd)
-            opt_tuning_names = ["opt." + layer["name"] for layer in opt_tuning_params]
+            opt_tuning_names = [
+                "opt." + layer["name"] for layer in opt_tuning_params
+            ]
             the_rest_params = []
             for name, params in self.named_parameters():
                 if name not in opt_tuning_names:
                     the_rest_params.append(params)
-            the_rest_params = [{"params": the_rest_params, "lr": lr, "weight_decay": wd, "name": "the_rest"}]
+            the_rest_params = [{
+                "params": the_rest_params,
+                "lr": lr,
+                "weight_decay": wd,
+                "name": "the_rest"
+            }]
             all_params = opt_tuning_params + the_rest_params
             optimizer = torch.optim.AdamW(all_params)
         return optimizer
+
 
 class OPTPromptSeqRec(OPTSeqRec):
 
@@ -507,14 +522,15 @@ class BERTSeqRec(TextSeqRec):
                                    attention_mask=attention_mask)
         else:
             output = self.bert(input_ids=tokenized_ids,
-                                attention_mask=attention_mask)
-            
+                               attention_mask=attention_mask)
+
         pooling_method = self.hparams.config.pooling_method
         if pooling_method == "mean":
             # (B * L_sas, L_plm, H_plm)
             sentence_embs = output.last_hidden_state
             # (B * L_sas, H_plm)
-            item_embs = mean_pooling(sentence_embs, attention_mask).type_as(sentence_embs)
+            item_embs = mean_pooling(sentence_embs,
+                                     attention_mask).type_as(sentence_embs)
         elif pooling_method == "cls":
             item_embs = output.last_hidden_state[:, 0, :]
         elif pooling_method == "pooler":
@@ -539,7 +555,7 @@ class BERTSeqRec(TextSeqRec):
     def _set_bert_lr(self, lr, decay, wd):
         tuning_params = []
         n_layers = self.bert.config.num_hidden_layers
-        lrs = [lr * (decay ** (n_layers - i)) for i in range(n_layers)] 
+        lrs = [lr * (decay**(n_layers - i)) for i in range(n_layers)]
         no_weight_decay = ["bias", "LayerNorm.weight"]
 
         for name, params in self.bert.named_parameters():
@@ -556,20 +572,26 @@ class BERTSeqRec(TextSeqRec):
                 p.update(weight_decay=wd)
             tuning_params.append(p)
 
-        tuning_params = [layer for layer in tuning_params if layer["params"].requires_grad]
+        tuning_params = [
+            layer for layer in tuning_params if layer["params"].requires_grad
+        ]
         return tuning_params
 
     def configure_optimizers(self):
         lr = self.hparams.config.lr
         wd = self.hparams.config.weight_decay
         if self.hparams.config.plm_n_unfreeze_layers == 0:
-            optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=wd)
+            optimizer = torch.optim.AdamW(self.parameters(),
+                                          lr=lr,
+                                          weight_decay=wd)
         else:
             plm_lr = self.hparams.config.plm_lr
             layer_decay = self.hparams.config.plm_lr_layer_decay
             # set different learning rate for different layers
             bert_tuning_params = self._set_bert_lr(plm_lr, layer_decay, wd)
-            bert_tuning_names = ["bert." + layer["name"] for layer in bert_tuning_params]
+            bert_tuning_names = [
+                "bert." + layer["name"] for layer in bert_tuning_params
+            ]
             the_rest_layers = []
             for name, params in self.named_parameters():
                 if name not in bert_tuning_names:
@@ -577,9 +599,12 @@ class BERTSeqRec(TextSeqRec):
                     #     the_rest_layers.append({"params": params, "lr": 1e-3, "name": name})
                     # else:
                     the_rest_layers.append({
-                        "params": params, "lr": lr, "weight_decay": wd, "name": name
+                        "params": params,
+                        "lr": lr,
+                        "weight_decay": wd,
+                        "name": name
                     })
-            
+
             all_params = bert_tuning_params + the_rest_layers
             optimizer = torch.optim.AdamW(all_params)
             # warmup_type = "linear"
@@ -587,7 +612,7 @@ class BERTSeqRec(TextSeqRec):
             #     scheduler = []
             #     warmup_steps = self.hparams.config.warmup_steps
             #     total_steps = self.hparams.config.total_steps
-                
+
             #     lr_lambda = [get_lr_scheduler_function(warmup_type, warmup_steps, total_steps)]
             #     scheduler.append({scheduler=LambdaLR(optimizer, lr_lambda=lr_lambda), interval="step"})
         return optimizer
@@ -635,3 +660,47 @@ class BERTPromptSeqRec(BERTSeqRec):
         elif pooling_method == "pooler":
             item_embs = output.pooler_output  # (B * L_sas, H_plm)
         return item_embs
+
+class PreInferOPTSeqRec(OPTSeqRec):
+    def __init__(self, trainable_opt_part, tokenized_embs_lookup, config: OPTSeqRecConfig):
+        self.opt = trainable_opt_part
+        self.tokenized_embs_lookup = tokenized_embs_lookup
+        
+        # normalized the tokenized_embs_lookup
+        self.tokenized_embs_lookup = self.tokenized_embs_lookup / torch.norm(self.tokenized_embs_lookup, dim=1, keepdim=True)
+
+        # transform the tokenized_embs_lookup to an embedding layer
+        self.tokenized_embs_lookup = nn.Embedding.from_pretrained(self.tokenized_embs_lookup)
+        self.tokenized_embs_lookup.weight.requires_grad = False
+        
+        self.save_hyperparameters(ignore=["trainable_opt_part", "tokenized_embs_lookup"])
+        super(PreInferOPTSeqRec, self).__init__(self.hparams.config)
+    
+    def _set_plm_model(self, plm_name):
+        pass
+    
+    def _freeze_plm_layers(self, num_unfreeze_layers):
+        pass
+
+    def _get_opt_output(self, tokenized_ids, attention_mask):
+        if self.hparams.config.plm_n_unfreeze_layers == 0:
+            tokenized_embs = self.tokenized_embs_lookup(tokenized_ids)
+        else:
+            tokenized_embs = self.tokenized_embs_lookup(tokenized_ids)
+            output = self.opt(input_embs=tokenized_embs,
+                              attention_mask=attention_mask)
+            
+        # (B * L_sas, L_plm, H_plm)
+        sentence_embs = output.last_hidden_state
+        pooling_method = self.hparams.config.pooling_method
+        if pooling_method == "mean":
+            # (B * L_sas, H_plm)
+            item_embs = mean_pooling(sentence_embs,
+                                     attention_mask).type_as(sentence_embs)
+        elif pooling_method == "last":
+            # (B * L_sas, H_plm)
+            item_embs = last_pooling(sentence_embs,
+                                     attention_mask).type_as(sentence_embs)
+        return item_embs
+    
+    
