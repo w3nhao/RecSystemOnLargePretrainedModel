@@ -8,18 +8,26 @@ def get_data_configs(dataset):
     item_text_field = "item_text"
     item_seq_field = "interactions"
 
-    if dataset.lower() in ["mind_small", "mind_large"]:
-        data_dir = f"data/{dataset}/"
+    data_dir = f"data/{dataset}/"
+    
+    if dataset in ["MIND_small", "MIND_large"]:
         inter_table = "behaviors"
         item_table = "news"
 
         old_uid_field = "userid"
-        old_iid_field = "newid"
+        old_iid_field = "newsid"
         old_item_text_field = "title"
         old_item_seq_field = "behaviors"
+    elif dataset == "hm":
+        inter_table = "behaviors"
+        item_table = "items"
 
+        old_uid_field = "userid"
+        old_iid_field = "itemid"
+        old_item_text_field = "description"
+        old_item_seq_field = "behaviors"
     else:
-        raise ValueError("dataset must be in ['MIND_small', 'MIND_large']")
+        raise ValueError("dataset must be in ['MIND_small', 'MIND_large', 'hm']")
 
     table_configs = {
         inter_table: {
@@ -37,9 +45,9 @@ def get_data_configs(dataset):
         },
         item_table: {
             "filepath": data_dir + f"{item_table}.tsv",
-            "usecols": ["newid", "title"],
+            "usecols": [old_iid_field, old_item_text_field],
             "filed_type": {
-                "newid": str,
+                "newsid": str,
                 "title": str
             },
             "rename_cols": {

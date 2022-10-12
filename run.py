@@ -3,8 +3,10 @@ import torch
 from datetime import datetime
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning import loggers as pl_loggers
+from pytorch_lightning.strategies import DDPFullyShardedNativeStrategy
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.profilers import PyTorchProfiler, AdvancedProfiler
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 from transformers import logging
 
 from datamodules.datamodule import SeqDataModule, PRETRAIN_MODEL_ABBR
@@ -75,10 +77,19 @@ if __name__ == "__main__":
                            type=str,
                            default="facebook/opt-125m",
                            help="pretrained language model name")
+    argparser.add_argument("--pre_inference",
+                           type=parse_boolean,
+                           default=False,
+                           help="whether to do pre-inference")
     argparser.add_argument("--use_prompt",
                            type=parse_boolean,
                            default=False,
                            help="whether to use prompt")
+    argparser.add_argument("--strategy",
+                           type=str,
+                           default="none",
+                           help="specify deepspeed stage, support stage_2, stage_2_offload"
+                           "stage_3, stage_3_offload, none")
 
     temp_args, _ = argparser.parse_known_args()
     rec_model = get_model(args=temp_args)
@@ -119,6 +130,21 @@ if __name__ == "__main__":
     csv_logger = pl_loggers.CSVLogger(save_dir=log_save_dir,
                                       name=model_name,
                                       version=version_name)
+    
+    if args.strategy == "none":
+        strategy = "ddp" if len(args.devices) > 1 else None
+    elif args.strategy == "stage_2":
+        strategy = "deepspeed_stage_2"
+    elif args.strategy == "stage_2_offload":
+        strategy = "deepspeed_stage_2_offload"
+    elif args.strategy == "stage_3":
+        strategy = "deepspeed_stage_3"
+    elif args.strategy == "stage_3_offload":
+        strategy = "deepspeed_stage_3_offload"
+    elif args.strategy == "fsdp_offload":
+        strategy = DDPFullyShardedNativeStrategy(cpu_offload=CPUOffload(offload_params=True))
+    else:
+        raise ValueError("Unsupport strategy: {}".format(args.strategy))
 
     trainer = Trainer(
         accelerator=args.accelerator,
@@ -128,7 +154,7 @@ if __name__ == "__main__":
         callbacks=[checkpoint_callback, early_stop_callback],
         logger=[tb_logger, csv_logger],
         deterministic=True,
-        strategy="ddp" if len(args.devices) > 1 else None,
+        strategy=strategy,
         # val_check_interval=0.25,
         # strategy="ddp_find_unused_parameters_false" if len(args.devices) > 1 else None,
     )

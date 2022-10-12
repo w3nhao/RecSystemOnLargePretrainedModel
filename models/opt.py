@@ -332,7 +332,6 @@ class OPTDecoderLayer(nn.Module):
                 (see `past_key_values`).
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
         """
-
         residual = hidden_states
 
         # 125m, 1.7B, ..., 175B applies layer norm BEFORE attention
@@ -683,7 +682,6 @@ class OPTDecoder(OPTPreTrainedModel):
         if self.project_in is not None:
             inputs_embeds = self.project_in(inputs_embeds)
         hidden_states = inputs_embeds + pos_embeds
-
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None

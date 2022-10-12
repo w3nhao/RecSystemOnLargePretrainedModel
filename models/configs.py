@@ -1,72 +1,91 @@
-from dataclasses import dataclass
-import dataclasses
-from typing import List
-
-
-@dataclass
 class SeqRecConfig:
-    item_token_num: int
-    lr: float = 0.001
-    sasrec_seq_len: int = 20
-    sasrec_n_layers: int = 2
-    sasrec_n_heads: int = 2
-    sasrec_hidden_size: int = 64
-    sasrec_inner_size: int = 256
-    sasrec_hidden_dropout: float = 0.5
-    sasrec_attention_dropout: float = 0.5
-    layer_norm_eps: float = 1e-12
-    initializer_range: float = 0.02
-    topk_list: int = dataclasses.field(default_factory=list)
+    def __init__(self, item_token_num: int, **kwargs):
+        self.item_token_num = item_token_num
+        self.lr = kwargs.pop("lr", 1e-3)
+        self.weight_decay = kwargs.pop("weight_decay", 0.1)
+        self.sasrec_seq_len = kwargs.pop("sasrec_seq_len", 20)
+        self.sasrec_n_layers = kwargs.pop("sasrec_n_layers", 2)
+        self.sasrec_n_heads = kwargs.pop("sasrec_n_heads", 2)
+        self.sasrec_hidden_size = kwargs.pop("sasrec_hidden_size", 64)
+        self.sasrec_inner_size = kwargs.pop("sasrec_inner_size", 256)
+        self.sasrec_hidden_dropout = kwargs.pop("sasrec_hidden_dropout", 0.5)
+        self.sasrec_attention_dropout = kwargs.pop("sasrec_attention_dropout", 0.5)
+        self.layer_norm_eps = kwargs.pop("layer_norm_eps", 1e-12)
+        self.initializer_range = kwargs.pop("initializer_range", 0.02)
+        self.topk_list = kwargs.pop("topk_list", [5, 10, 20])
 
-@dataclass
+        if kwargs:
+            raise ValueError(f'Unrecognized arguments: {kwargs}')
+        
+
 class TextSeqRecConfig(SeqRecConfig):
-    plm_name: str = 'facebook/opt-125m'
-    plm_n_unfreeze_layers: int = 0
-    plm_lr: float = 1e-5
-    plm_lr_layer_decay: float = 0.8
-    projection_n_layers: int = 5
-    projection_inner_sizes: int = dataclasses.field(default_factory=list)
-
-    def __post_init__(self):
+    def __init__(self, item_token_num: int, **kwargs):
+        self.plm_name = kwargs.pop("plm_name", 'facebook/opt-125m')
+        self.plm_n_unfreeze_layers = kwargs.pop("plm_n_unfreeze_layers", 0)
+        
+        plm_lr = kwargs.pop("plm_lr", 1e-5)
+        plm_lr_layer_decay = kwargs.pop("plm_lr_layer_decay", 0.8)
+        if self.plm_n_unfreeze_layers != 0:
+            self.plm_lr = plm_lr
+            self.plm_lr_layer_decay = plm_lr_layer_decay
+            
+        self.projection_n_layers = kwargs.pop("projection_n_layers", 5)
+        self.projection_inner_sizes = kwargs.pop("projection_inner_sizes", [3136, 784, 3136])
         assert len(self.projection_inner_sizes) == self.projection_n_layers - 1
-
-        if self.plm_n_unfreeze_layers == 0:
-            del self.plm_lr
-            del self.plm_lr_layer_decay
-
-@dataclass
+        
+        super().__init__(item_token_num, **kwargs)
+        
+        
 class OPTSeqRecConfig(TextSeqRecConfig):
-    pooling_method: str = 'mean'
-
-    def __post_init__(self):
-        super().__post_init__()
-
+    def __init__(
+        self, 
+        item_token_num: int, 
+        pooling_method: str = 'mean', 
+        **kwargs
+        ):
+        self.pooling_method = pooling_method
+        
         if self.pooling_method not in ['mean', 'last']:
             raise ValueError(
                 f"pooling_method {self.pooling_method} is not supported.")
+        
+        super().__init__(item_token_num, **kwargs)
 
-@dataclass
+
 class BERTSeqRecConfig(TextSeqRecConfig):
-    pooling_method: str = 'cls'
-
-    def __post_init__(self):
-        super().__post_init__()
-
+    def __init__(
+        self, 
+        item_token_num: int, 
+        pooling_method: str = 'cls', 
+        **kwargs
+        ):
+        self.pooling_method = pooling_method
+ 
         if self.pooling_method not in ['cls', 'mean', 'pooler']:
             raise ValueError(
                 f"pooling_method {self.pooling_method} is not supported.")
+        
+        super().__init__(item_token_num, **kwargs)
 
-@dataclass
-class OPTPromptSeqRecConfig(OPTSeqRecConfig):
-    pooling_method: str = 'mean_last'
-    prompt_projection: str = 'nonlinear'
-    prompt_hidden_size: int = 128
-    pre_seq_len: int = 20
-    post_seq_len: int = 10
-    last_query_len: int = 1
 
-    def __post_init__(self):
-        super(OPTSeqRecConfig, self).__post_init__()
+class OPTPromptSeqRecConfig(TextSeqRecConfig):
+    def __init__(
+        self, 
+        item_token_num: int, 
+        pooling_method: str = 'mean_last',
+        prompt_projection: str = 'nonlinear',
+        prompt_hidden_size: int = 128,
+        pre_seq_len: int = 20,
+        post_seq_len: int = 10,
+        last_query_len: int = 1,
+        **kwargs
+        ):
+        self.pooling_method = pooling_method
+        self.prompt_projection = prompt_projection
+        self.prompt_hidden_size = prompt_hidden_size
+        self.pre_seq_len = pre_seq_len
+        self.post_seq_len = post_seq_len
+        self.last_query_len = last_query_len
 
         if self.pooling_method not in ['mean_last', 'last', 'mean']:
             raise ValueError(
@@ -84,16 +103,25 @@ class OPTPromptSeqRecConfig(OPTSeqRecConfig):
 
         if self.pooling_method in ['mean_last', 'last']:
             assert self.last_query_len > 0
+            
+        super().__init__(item_token_num, **kwargs)
 
-@dataclass
-class BERTPromptSeqRecConfig(BERTSeqRecConfig):
-    pooling_method: str = 'cls'
-    prompt_projection: str = 'nonlinear'
-    prompt_hidden_size: int = 128
-    pre_seq_len: int = 20
 
-    def __post_init__(self):
-        super(BERTSeqRecConfig, self).__post_init__()
+class BERTPromptSeqRecConfig(TextSeqRecConfig):
+    def __init__(
+        self, 
+        item_token_num: int, 
+        pooling_method: str = 'cls',
+        prompt_hidden_size: int = 128,
+        prompt_projection: str = 'nonlinear',
+        pre_seq_len: int = 20,
+        **kwargs
+        ):
+        self.pooling_method = pooling_method
+        self.prompt_hidden_size = prompt_hidden_size
+        self.pre_seq_len = pre_seq_len
+        self.prompt_projection = prompt_projection
+
 
         if self.pooling_method not in ['cls', 'mean', 'pooler']:
             raise ValueError(
@@ -105,3 +133,5 @@ class BERTPromptSeqRecConfig(BERTSeqRecConfig):
             )
 
         assert self.pre_seq_len >= 0
+
+        super().__init__(item_token_num, **kwargs)

@@ -90,6 +90,7 @@ def add_model_specific_args(args, parent_parser):
 
     # shared parameters of SeqRec
     parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--sasrec_n_layers", type=int, default=2)
     parser.add_argument("--sasrec_n_heads", type=int, default=2)
     parser.add_argument("--sasrec_hidden_size", type=int, default=64)
@@ -118,14 +119,14 @@ def build_model_config(args, item_token_num):
             if use_prompt:
                 config = OPTPromptSeqRecConfig(
                     item_token_num=item_token_num,
-                    plm_n_unfreeze_layers = args.plm_n_unfreeze_layers,
-                    plm_lr = args.plm_lr,
-                    plm_lr_layer_decay = args.plm_lr_layer_decay,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    plm_lr=args.plm_lr,
+                    plm_lr_layer_decay=args.plm_lr_layer_decay,
                     projection_n_layers=args.projection_n_layers,
                     projection_inner_sizes=args.projection_inner_sizes,
                     pooling_method=args.pooling_method,
                     prompt_projection=args.prompt_projeciton,
-                    prompt_hidden_size = args.prompt_hidden_size,
+                    prompt_hidden_size=args.prompt_hidden_size,
                     pre_seq_len=args.pre_seq_len,
                     post_seq_len=args.post_seq_len,
                     last_query_len=args.last_query_len,
@@ -133,9 +134,9 @@ def build_model_config(args, item_token_num):
             else:
                 config = OPTSeqRecConfig(
                     item_token_num=item_token_num,
-                    plm_n_unfreeze_layers = args.plm_n_unfreeze_layers,
-                    plm_lr = args.plm_lr,
-                    plm_lr_layer_decay = args.plm_lr_layer_decay,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    plm_lr=args.plm_lr,
+                    plm_lr_layer_decay=args.plm_lr_layer_decay,
                     projection_n_layers=args.projection_n_layers,
                     projection_inner_sizes=args.projection_inner_sizes,
                     pooling_method=args.pooling_method,
@@ -144,22 +145,22 @@ def build_model_config(args, item_token_num):
             if use_prompt:
                 config = BERTPromptSeqRecConfig(
                     item_token_num=item_token_num,
-                    plm_n_unfreeze_layers = args.plm_n_unfreeze_layers,
-                    plm_lr = args.plm_lr,
-                    plm_lr_layer_decay = args.plm_lr_layer_decay,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    plm_lr=args.plm_lr,
+                    plm_lr_layer_decay=args.plm_lr_layer_decay,
                     projection_n_layers=args.projection_n_layers,
                     projection_inner_sizes=args.projection_inner_sizes,
                     pooling_method=args.pooling_method,
                     prompt_projection=args.prompt_projeciton,
-                    prompt_hidden_size = args.prompt_hidden_size,
+                    prompt_hidden_size=args.prompt_hidden_size,
                     pre_seq_len=args.pre_seq_len,
                 )
             else:
                 config = BERTSeqRecConfig(
                     item_token_num=item_token_num,
-                    plm_n_unfreeze_layers = args.plm_n_unfreeze_layers,
-                    plm_lr = args.plm_lr,
-                    plm_lr_layer_decay = args.plm_lr_layer_decay,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    plm_lr=args.plm_lr,
+                    plm_lr_layer_decay=args.plm_lr_layer_decay,
                     projection_n_layers=args.projection_n_layers,
                     projection_inner_sizes=args.projection_inner_sizes,
                     pooling_method=args.pooling_method,
@@ -169,6 +170,7 @@ def build_model_config(args, item_token_num):
 
     # shared parameters of SeqRec
     config.lr = args.lr
+    config.weight_decay = args.weight_decay
     config.sasrec_seq_len = args.sasrec_seq_len
     config.sasrec_n_layers = args.sasrec_n_layers
     config.sasrec_n_heads = args.sasrec_n_heads

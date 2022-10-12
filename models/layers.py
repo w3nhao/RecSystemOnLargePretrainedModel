@@ -133,7 +133,8 @@ class MultiHeadAttention(nn.Module):
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
         # [batch_size heads seq_len seq_len] scores
         # [batch_size 1 1 seq_len]
-        attention_scores = attention_scores + attention_mask
+        # attention_scores = attention_scores + attention_mask
+        attention_scores = attention_scores + attention_mask.type_as(attention_scores)
 
         # Normalize the attention scores to probabilities.
         attention_probs = self.softmax(attention_scores)
@@ -142,6 +143,7 @@ class MultiHeadAttention(nn.Module):
 
         attention_probs = self.attn_dropout(attention_probs)
         context_layer = torch.matmul(attention_probs, value_layer)
+        
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (
             self.all_head_size, )

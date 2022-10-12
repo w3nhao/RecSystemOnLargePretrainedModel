@@ -153,3 +153,4 @@ logs/
 
 
 test_logs/
+optuna_logs/

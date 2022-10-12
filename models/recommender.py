@@ -1,11 +1,15 @@
 from abc import abstractmethod, ABC
+import imp
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
+from torch.optim.lr_scheduler import LambdaLR
+from torch.distributed.fsdp.wrap import wrap
 from torchmetrics import MetricCollection
 from transformers import BertModel
 from utils.metrics import MRR, NDCG, HR, get_topk_ranks
 from utils.pylogger import get_pylogger
+from utils.schedule_functions import get_lr_scheduler_function
 from models.sasrec import SASRec
 from models.opt import OPTModel
 from models.layers import PromptEncoder, DeepPromptEncoder
@@ -57,9 +61,6 @@ class SeqRec(pl.LightningModule, ABC):
     def _init_weights(self, module):
         """Initialize the weights"""
         if isinstance(module, (nn.Linear, nn.Embedding)):
-            # Slightly different from the TF version
-            # which uses truncated_normal for initialization
-            # cf https://github.com/pytorch/pytorch/pull/5617
             initializer_range = self.hparams.config.initializer_range
             module.weight.data.normal_(mean=0.0, std=initializer_range)
         elif isinstance(module, nn.LayerNorm):
@@ -67,6 +68,8 @@ class SeqRec(pl.LightningModule, ABC):
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
+        if isinstance(module, nn.Embedding) and module.padding_idx is not None:
+            module.weight.data[module.padding_idx].zero_()
 
     @abstractmethod
     def _set_feature_extractor(self):
@@ -176,7 +179,8 @@ class SeqRec(pl.LightningModule, ABC):
 
     def configure_optimizers(self):
         lr = self.hparams.config.lr
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        wd = self.hparams.config.weight_decay
+        optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=wd)
         return optimizer
 
 
@@ -294,57 +298,65 @@ class OPTSeqRec(TextSeqRec):
         return item_embs
 
     def _get_opt_output(self, tokenized_ids, attention_mask):
-        output = self.opt(input_ids=tokenized_ids,
-                          attention_mask=attention_mask)
+        if self.hparams.config.plm_n_unfreeze_layers == 0:
+            with torch.no_grad():
+                output = self.opt(input_ids=tokenized_ids,
+                                attention_mask=attention_mask)
+        else:
+            output = self.opt(input_ids=tokenized_ids,
+                                attention_mask=attention_mask)
         # (B * L_sas, L_plm, H_plm)
         sentence_embs = output.last_hidden_state
         pooling_method = self.hparams.config.pooling_method
         if pooling_method == "mean":
             # (B * L_sas, H_plm)
-            item_embs = mean_pooling(sentence_embs, attention_mask)
+            item_embs = mean_pooling(sentence_embs, attention_mask).type_as(sentence_embs)
         elif pooling_method == "last":
             # (B * L_sas, H_plm)
-            item_embs = last_pooling(sentence_embs, attention_mask)
+            item_embs = last_pooling(sentence_embs, attention_mask).type_as(sentence_embs)
         return item_embs
     
-    def _set_opt_lr(self, lr, decay):
-        tuning_layers = []
+    def _set_opt_lr(self, lr, decay, wd):
+        tuning_params = []
         n_layers = self.opt.config.num_hidden_layers
         lrs = [lr * (decay ** (n_layers - i)) for i in range(n_layers)] 
-
+        no_weight_decay = ["bias", "LayerNorm.weight"]
+        
         for name, params in self.opt.named_parameters():
             if name.startswith("decoder.layers"):
                 layer_idx = int(name.split(".")[2])
-                tuning_layers.append({
-                    "params": params, "lr": lrs[layer_idx], "name": name
-                })
+                p = {"params": params, "lr": lrs[layer_idx], "name": name}
             elif name.startswith("decoder.embed_"):
-                tuning_layers.append({
-                    "params": params, "lr": lrs[0], "name": name
-                })
+                p = {"params": params, "lr": lrs[0], "name": name}
             else:
-                tuning_layers.append({
-                    "params": params, "lr": lrs[-1], "name": name
-                })
+                p = {"params": params, "lr": lrs[-1], "name": name}
+            if any(nd in name for nd in no_weight_decay):
+                p.update(weight_decay=0.0)
+            else:
+                p.update(weight_decay=wd)
+            tuning_params.append(p)
 
-        tuning_layers = [layer for layer in tuning_layers if layer["params"].requires_grad]
-        return tuning_layers
+        tuning_params = [layer for layer in tuning_params if layer["params"].requires_grad]
+        return tuning_params
 
     def configure_optimizers(self):
         lr = self.hparams.config.lr
-        plm_lr = self.hparams.config.plm_lr
-        layer_decay = self.hparams.config.plm_lr_layer_decay
-        # set different learning rate for different layers
-        opt_tuning_layers = self._set_opt_lr(plm_lr, layer_decay)
-        opt_tuning_names = ["opt." + layer["name"] for layer in opt_tuning_layers]
-        the_rest_layers = []
-        for name, params in self.named_parameters():
-            if name not in opt_tuning_names:
-                the_rest_layers.append({
-                    "params": params, "lr": lr, "name": name
-                })
-        all_params = opt_tuning_layers + the_rest_layers
-        optimizer = torch.optim.Adam(all_params, lr=lr)
+        wd = self.hparams.config.weight_decay
+        if self.hparams.config.plm_n_unfreeze_layers == 0:
+            optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=wd)
+        else:
+            plm_lr = self.hparams.config.plm_lr
+            layer_decay = self.hparams.config.plm_lr_layer_decay
+            # set different learning rate for different layers
+            opt_tuning_params = self._set_opt_lr(plm_lr, layer_decay, wd)
+            opt_tuning_names = ["opt." + layer["name"] for layer in opt_tuning_params]
+            the_rest_params = []
+            for name, params in self.named_parameters():
+                if name not in opt_tuning_names:
+                    the_rest_params.append(params)
+            the_rest_params = [{"params": the_rest_params, "lr": lr, "weight_decay": wd, "name": "the_rest"}]
+            all_params = opt_tuning_params + the_rest_params
+            optimizer = torch.optim.AdamW(all_params)
         return optimizer
 
 class OPTPromptSeqRec(OPTSeqRec):
@@ -489,14 +501,20 @@ class BERTSeqRec(TextSeqRec):
                 param.requires_grad = True
 
     def _get_bert_output(self, tokenized_ids, attention_mask):
-        output = self.bert(input_ids=tokenized_ids,
-                           attention_mask=attention_mask)
+        if self.hparams.config.plm_n_unfreeze_layers == 0:
+            with torch.no_grad():
+                output = self.bert(input_ids=tokenized_ids,
+                                   attention_mask=attention_mask)
+        else:
+            output = self.bert(input_ids=tokenized_ids,
+                                attention_mask=attention_mask)
+            
         pooling_method = self.hparams.config.pooling_method
         if pooling_method == "mean":
             # (B * L_sas, L_plm, H_plm)
             sentence_embs = output.last_hidden_state
             # (B * L_sas, H_plm)
-            item_embs = mean_pooling(sentence_embs, attention_mask)
+            item_embs = mean_pooling(sentence_embs, attention_mask).type_as(sentence_embs)
         elif pooling_method == "cls":
             item_embs = output.last_hidden_state[:, 0, :]
         elif pooling_method == "pooler":
@@ -518,48 +536,60 @@ class BERTSeqRec(TextSeqRec):
         item_embs = item_embs.view(-1, sasrec_seq_len, sasrec_hidden_size)
         return item_embs
 
-    def _set_bert_lr(self, lr, decay):
-        tuning_layers = []
+    def _set_bert_lr(self, lr, decay, wd):
+        tuning_params = []
         n_layers = self.bert.config.num_hidden_layers
         lrs = [lr * (decay ** (n_layers - i)) for i in range(n_layers)] 
+        no_weight_decay = ["bias", "LayerNorm.weight"]
 
         for name, params in self.bert.named_parameters():
             if name.startswith("encoder.layer"):
                 layer_idx = int(name.split(".")[2])
-                tuning_layers.append({
-                    "params": params, "lr": lrs[layer_idx], "name": name
-                })
+                p = {"params": params, "lr": lrs[layer_idx], "name": name}
             elif name.startswith("embeddings"):
-                tuning_layers.append({
-                    "params": params, "lr": lrs[0], "name": name
-                })
+                p = {"params": params, "lr": lrs[0], "name": name}
             else:
-                tuning_layers.append({
-                    "params": params, "lr": lrs[-1], "name": name
-                })
+                p = {"params": params, "lr": lrs[-1], "name": name}
+            if any(nd in name for nd in no_weight_decay):
+                p.update(weight_decay=0.0)
+            else:
+                p.update(weight_decay=wd)
+            tuning_params.append(p)
 
-        tuning_layers = [layer for layer in tuning_layers if layer["params"].requires_grad]
-        return tuning_layers
+        tuning_params = [layer for layer in tuning_params if layer["params"].requires_grad]
+        return tuning_params
 
     def configure_optimizers(self):
         lr = self.hparams.config.lr
-        plm_lr = self.hparams.config.plm_lr
-        layer_decay = self.hparams.config.plm_lr_layer_decay
-        # set different learning rate for different layers
-        bert_tuning_layers = self._set_bert_lr(plm_lr, layer_decay)
-        bert_tuning_names = ["bert." + layer["name"] for layer in bert_tuning_layers]
-        the_rest_layers = []
-        for name, params in self.named_parameters():
-            if name not in bert_tuning_names:
-                # if name.startswith("projection"):
-                #     the_rest_layers.append({"params": params, "lr": 1e-3, "name": name})
-                # else:
-                the_rest_layers.append({
-                    "params": params, "lr": lr, "name": name
-                })
-        
-        all_params = bert_tuning_layers + the_rest_layers
-        optimizer = torch.optim.Adam(all_params, lr=lr)
+        wd = self.hparams.config.weight_decay
+        if self.hparams.config.plm_n_unfreeze_layers == 0:
+            optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=wd)
+        else:
+            plm_lr = self.hparams.config.plm_lr
+            layer_decay = self.hparams.config.plm_lr_layer_decay
+            # set different learning rate for different layers
+            bert_tuning_params = self._set_bert_lr(plm_lr, layer_decay, wd)
+            bert_tuning_names = ["bert." + layer["name"] for layer in bert_tuning_params]
+            the_rest_layers = []
+            for name, params in self.named_parameters():
+                if name not in bert_tuning_names:
+                    # if name.startswith("projection"):
+                    #     the_rest_layers.append({"params": params, "lr": 1e-3, "name": name})
+                    # else:
+                    the_rest_layers.append({
+                        "params": params, "lr": lr, "weight_decay": wd, "name": name
+                    })
+            
+            all_params = bert_tuning_params + the_rest_layers
+            optimizer = torch.optim.AdamW(all_params)
+            # warmup_type = "linear"
+            # if warmup_type is not None:
+            #     scheduler = []
+            #     warmup_steps = self.hparams.config.warmup_steps
+            #     total_steps = self.hparams.config.total_steps
+                
+            #     lr_lambda = [get_lr_scheduler_function(warmup_type, warmup_steps, total_steps)]
+            #     scheduler.append({scheduler=LambdaLR(optimizer, lr_lambda=lr_lambda), interval="step"})
         return optimizer
 
 
