@@ -75,7 +75,7 @@ def get_data_configs(dataset):
 @dataclass
 class SeqRecDataModuleConfig:
     dataset: str
-    plm_name: str
+    plm_name: str = "facebook/opt-125m"
     min_item_seq_len: int = 5
     max_item_seq_len: Optional[int] = None
     sasrec_seq_len: int = 20

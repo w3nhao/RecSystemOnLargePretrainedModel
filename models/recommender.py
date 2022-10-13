@@ -185,6 +185,42 @@ class SeqRec(pl.LightningModule, ABC):
                                       lr=lr,
                                       weight_decay=wd)
         return optimizer
+    
+    @classmethod
+    def add_model_specific_args(cls, parent_parser):
+        parser = parent_parser.add_argument_group("SeqRec")
+        parser.add_argument("--lr", type=float, default=0.001)
+        parser.add_argument("--weight_decay", type=float, default=0.1)
+        parser.add_argument("--sasrec_n_layers", type=int, default=2)
+        parser.add_argument("--sasrec_n_heads", type=int, default=2)
+        parser.add_argument("--sasrec_hidden_size", type=int, default=64)
+        parser.add_argument("--sasrec_inner_size", type=int, default=256)
+        parser.add_argument("--sasrec_hidden_dropout", type=float, default=0.5)
+        parser.add_argument("--sasrec_attention_dropout", type=float, default=0.5)
+        parser.add_argument("--layer_norm_eps", type=float, default=1e-6)
+        parser.add_argument("--initializer_range", type=float, default=0.02)
+        parser.add_argument("--topk_list",
+                            type=int,
+                            nargs="+",
+                            default=[5, 10, 20])
+        return parent_parser
+    
+    @classmethod
+    def build_model_config(cls, args, config):
+        # shared parameters of SeqRec
+        config.lr = args.lr
+        config.weight_decay = args.weight_decay
+        config.sasrec_seq_len = args.sasrec_seq_len
+        config.sasrec_n_layers = args.sasrec_n_layers
+        config.sasrec_n_heads = args.sasrec_n_heads
+        config.sasrec_hidden_size = args.sasrec_hidden_size
+        config.sasrec_inner_size = args.sasrec_inner_size
+        config.sasrec_hidden_dropout = args.sasrec_hidden_dropout
+        config.sasrec_attention_dropout = args.sasrec_attention_dropout
+        config.layer_norm_eps = args.layer_norm_eps
+        config.initializer_range = args.initializer_range
+        config.topk_list = args.topk_list
+        return config
 
 
 class IDSeqRec(SeqRec):
@@ -206,6 +242,11 @@ class IDSeqRec(SeqRec):
         item_embs = self.item_embedding(item_id_seq)
         return item_embs
 
+    @classmethod
+    def build_model_config(cls, args, item_token_num):
+        config = SeqRecConfig(item_token_num=item_token_num)
+        config = super(IDSeqRec, cls).build_model_config(args, config)
+        return config
 
 class TextSeqRec(SeqRec, ABC):
 
@@ -224,7 +265,6 @@ class TextSeqRec(SeqRec, ABC):
         projection_n_layers = config.projection_n_layers
         projection_inner_sizes = config.projection_inner_sizes
         hidden_size = config.sasrec_hidden_size
-        layer_norm_eps = config.layer_norm_eps
         projection_sizes = [output_size] + \
             projection_inner_sizes + [hidden_size]
         # mlps with residual connections for projection
@@ -236,6 +276,7 @@ class TextSeqRec(SeqRec, ABC):
                     nn.Linear(projection_sizes[i], projection_sizes[i + 1]),
                     # nn.GELU()
                 ))
+        # layer_norm_eps = config.layer_norm_eps
         # self.projection.append(nn.LayerNorm(hidden_size, eps=layer_norm_eps))
 
     @abstractmethod
@@ -250,6 +291,23 @@ class TextSeqRec(SeqRec, ABC):
     def _get_item_emb_dim(self):
         raise NotImplementedError
 
+    @classmethod
+    def add_model_specific_args(cls, parent_parser):
+        parser = super(TextSeqRec, cls).add_model_specific_args(parent_parser)
+        parser = parent_parser.add_argument_group("TextSeqRec")
+        # shared parameters of TextSeqRec
+        parser.add_argument("--projection_n_layers", type=int, default=5)
+        parser.add_argument("--projection_inner_sizes",
+                            type=int,
+                            nargs="*",
+                            default=[3136, 784, 3136, 784])
+        return parent_parser
+    
+    @classmethod
+    def build_model_config(cls, args, config):
+        config = super(TextSeqRec, cls).build_model_config(args, config)
+        config.plm_name = args.plm_name
+        return config
 
 class OPTSeqRec(TextSeqRec):
 
@@ -372,6 +430,31 @@ class OPTSeqRec(TextSeqRec):
             all_params = opt_tuning_params + the_rest_params
             optimizer = torch.optim.AdamW(all_params)
         return optimizer
+    
+    @classmethod
+    def add_model_specific_args(cls, parent_parser):
+        parser = super(OPTSeqRec, cls).add_model_specific_args(parent_parser)
+        parser = parent_parser.add_argument_group("OPTSeqRec")
+        parser.add_argument("--plm_n_unfreeze_layers", type=int, default=0)
+        # shared parameters of fine-tuneing PLM
+        parser.add_argument("--plm_lr", type=float, default=1e-5)
+        parser.add_argument("--plm_lr_layer_decay", type=float, default=0.8)
+        parser.add_argument("--pooling_method", type=str, default="mean")
+        return parent_parser
+
+    @classmethod
+    def build_model_config(cls, args, item_token_num):
+        config = OPTSeqRecConfig(
+                    item_token_num=item_token_num,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    plm_lr=args.plm_lr,
+                    plm_lr_layer_decay=args.plm_lr_layer_decay,
+                    projection_n_layers=args.projection_n_layers,
+                    projection_inner_sizes=args.projection_inner_sizes,
+                    pooling_method=args.pooling_method,
+                )
+        config = super(OPTSeqRec, cls).build_model_config(args, config)
+        return config
 
 
 class OPTPromptSeqRec(OPTSeqRec):
@@ -481,6 +564,37 @@ class OPTPromptSeqRec(OPTSeqRec):
             item_embs = self.fusion_mlp(item_embs)
         return item_embs
 
+    @classmethod
+    def add_model_specific_args(cls, parent_parser):
+        parser = super(OPTPromptSeqRec, cls).add_model_specific_args(parent_parser)
+        parser = parser.add_argument_group("OPTPromptSeqRec")
+        parser.add_argument("--pre_seq_len", type=int, default=20)
+        parser.add_argument("--post_seq_len", type=int, default=10)
+        parser.add_argument("--last_query_len", type=int, default=1)
+        parser.add_argument("--prompt_hidden_size", type=int, default=128)
+        parser.add_argument("--prompt_projeciton",
+                                type=str,
+                                default="nonlinear")
+        return parent_parser
+    
+    @classmethod
+    def build_model_config(cls, args, item_token_num):
+        config = OPTPromptSeqRecConfig(
+                    item_token_num=item_token_num,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    plm_lr=args.plm_lr,
+                    plm_lr_layer_decay=args.plm_lr_layer_decay,
+                    projection_n_layers=args.projection_n_layers,
+                    projection_inner_sizes=args.projection_inner_sizes,
+                    pooling_method=args.pooling_method,
+                    prompt_projection=args.prompt_projeciton,
+                    prompt_hidden_size=args.prompt_hidden_size,
+                    pre_seq_len=args.pre_seq_len,
+                    post_seq_len=args.post_seq_len,
+                    last_query_len=args.last_query_len,
+                )
+        config = super(OPTSeqRec, cls).build_model_config(args, config)
+        return config
 
 class BERTSeqRec(TextSeqRec):
 
@@ -616,6 +730,31 @@ class BERTSeqRec(TextSeqRec):
             #     lr_lambda = [get_lr_scheduler_function(warmup_type, warmup_steps, total_steps)]
             #     scheduler.append({scheduler=LambdaLR(optimizer, lr_lambda=lr_lambda), interval="step"})
         return optimizer
+    
+    @classmethod
+    def add_model_specific_args(cls, parent_parser):
+        parser = super(BERTSeqRec, cls).add_model_specific_args(parent_parser)
+        parser = parent_parser.add_argument_group("BERTSeqRec")
+        parser.add_argument("--plm_n_unfreeze_layers", type=int, default=0)
+        # shared parameters of fine-tuneing PLM
+        parser.add_argument("--plm_lr", type=float, default=1e-5)
+        parser.add_argument("--plm_lr_layer_decay", type=float, default=0.8)
+        parser.add_argument("--pooling_method", type=str, default="cls")
+        return parent_parser
+
+    @classmethod
+    def build_model_config(cls, args, item_token_num):
+        config = BERTSeqRecConfig(
+                    item_token_num=item_token_num,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    plm_lr=args.plm_lr,
+                    plm_lr_layer_decay=args.plm_lr_layer_decay,
+                    projection_n_layers=args.projection_n_layers,
+                    projection_inner_sizes=args.projection_inner_sizes,
+                    pooling_method=args.pooling_method,
+                )
+        config = super(BERTSeqRec, cls).build_model_config(args, config)
+        return config
 
 
 class BERTPromptSeqRec(BERTSeqRec):
@@ -660,6 +799,34 @@ class BERTPromptSeqRec(BERTSeqRec):
         elif pooling_method == "pooler":
             item_embs = output.pooler_output  # (B * L_sas, H_plm)
         return item_embs
+    
+    @classmethod
+    def add_model_specific_args(cls, parent_parser):
+        parser = super(BERTPromptSeqRec, cls).add_model_specific_args(parent_parser)
+        parser = parser.add_argument_group("BERTPromptSeqRec")
+        parser.add_argument("--pre_seq_len", type=int, default=20)
+        parser.add_argument("--prompt_hidden_size", type=int, default=128)
+        parser.add_argument("--prompt_projeciton",
+                                type=str,
+                                default="nonlinear")
+        return parent_parser
+    
+    @classmethod
+    def build_model_config(cls, args, item_token_num):
+        config = BERTPromptSeqRecConfig(
+                    item_token_num=item_token_num,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    plm_lr=args.plm_lr,
+                    plm_lr_layer_decay=args.plm_lr_layer_decay,
+                    projection_n_layers=args.projection_n_layers,
+                    projection_inner_sizes=args.projection_inner_sizes,
+                    pooling_method=args.pooling_method,
+                    prompt_projection=args.prompt_projeciton,
+                    prompt_hidden_size=args.prompt_hidden_size,
+                    pre_seq_len=args.pre_seq_len,
+                )
+        config = super(BERTSeqRec, cls).build_model_config(args, config)
+        return config
 
 class PreInferOPTSeqRec(OPTSeqRec):
     def __init__(self, trainable_opt_part, tokenized_embs_lookup, config: OPTSeqRecConfig):

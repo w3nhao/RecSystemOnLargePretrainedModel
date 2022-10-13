@@ -43,7 +43,6 @@ class SeqDataModule(LightningDataModule):
 
         dataset = dm_config.dataset
         self.data_configs = get_data_configs(dataset)
-
         self.tokenizer_abbr = PRETRAIN_MODEL_ABBR[dm_config.plm_name]
         max_len = dm_config.max_item_seq_len if dm_config.max_item_seq_len else "INF"
         self.processed_dir = os.path.join(
@@ -220,3 +219,40 @@ class SeqDataModule(LightningDataModule):
     def load_state_dict(self, state_dict):
         """Things to do when loading checkpoint."""
         pass
+    
+    @classmethod
+    def add_datamodule_specific_args(cls, parent_parser):
+        """Add datamodule specific arguments to the parser."""
+
+        def int_or_none(x):
+            return None if x in ["none", "None", "NONE"] else int(x)
+        
+        parser = parent_parser.add_argument_group("SeqRecDataModule")
+        parser.add_argument("--dataset", type=str, default="MIND_small")
+        parser.add_argument("--min_item_seq_len", type=int, default=5)
+        parser.add_argument("--max_item_seq_len", type=int_or_none, default=None)
+        parser.add_argument("--sasrec_seq_len", type=int, default=20)
+        parser.add_argument("--tokenized_len", type=int, default=30)
+        parser.add_argument("--batch_size", type=int, default=64)
+        parser.add_argument("--num_workers", type=int, default=4)
+        parser.add_argument("--pin_memory", type=bool, default=False)
+        return parent_parser
+
+    @classmethod
+    def build_datamodule_config(cls, args):
+        """Build configs from arguments."""
+        config = SeqRecDataModuleConfig(
+            dataset=args.dataset,
+            min_item_seq_len=args.min_item_seq_len,
+            max_item_seq_len=args.max_item_seq_len,
+            sasrec_seq_len=args.sasrec_seq_len,
+            tokenized_len=args.tokenized_len,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+        )
+        try:
+            config.plm_name = args.plm_name
+        except AttributeError:
+            log.info(f"No plm_name in args, use default tokenizer:'{config.plm_name}' to process text.")
+        return config
