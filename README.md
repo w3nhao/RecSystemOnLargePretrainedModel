@@ -1,15 +1,8 @@
-### Thoughts
-1. For super large model like OPT13B or larger, we split the model into layers and infer the embs layer by layer. This way could save cuda memory when only a few layers are needed to be trained. 
-
-2. Although we can store the pre-inferenced embs as an embedding layer inside the recommender model, it still takes cuda memory. So maybe we can store them as a numpy array and load them as a tensor in dataloader when needed. This way could slow down the training process, but it could save cuda memory. 
-Take MIND_small as an example, the number of items is 52771, if we padding or truncate the item decription sequence to a fixed length 30, the size of item description matrix in float32 is 52771 * 30 * 768 * 4 Bytes = 4.9GB, which is too large to be loaded into GPU memory. 
-
-### TODO
-1. Add a new class to store the pre-inferenced embs as a numpy array.
-
 
 ### how to use
-clone this repository first, then download the data from [here]() and uncompressed them to the folder `data/`  
+Clone this repository first, and download the data from [here](https://share.weiyun.com/eJh8dB51), uncompress data.tar to the folder `data/`  
+
+The data link need a password, please contact me via wenhao.deng@foxmail.com for the password.  
 
 The file structure should be like this:
 ```
@@ -35,6 +28,7 @@ pip install https://github.com/Lightning-AI/lightning/archive/refs/heads/master.
 pip install -r requirements.txt
 
 cd data/setup_scripts
+python bilibili.py
 python hm.py
 python MIND_large.py
 python MIND_small.py
@@ -46,7 +40,7 @@ Then you can run the following command to train the model:
 python run.py --input_type "text" --plm_name "facebook/opt-125m" --dataset "MIND_large"
 ```
 
-### Existing Issues
+### existing Issues
 if you encounter the following error:
 1. 
 ```bash
@@ -54,7 +48,16 @@ RuntimeError: torch_shm_manager at "/opt/anaconda3/envs/plmrs/lib/python3.8/site
 ```
 Please try to set --num_workers to 0 and --pre_inference_num_workers to 0 if using pre-inference.
 
-### notes
+### thoughts
+1. For super large model like OPT13B or larger, we split the model into layers and infer the embs layer by layer. This way could save cuda memory when only a few layers are needed to be trained. 
+
+2. Although we can store the pre-inferenced embs as an embedding layer inside the recommender model, it still takes cuda memory. So maybe we can store them as a numpy array and load them as a tensor in dataloader when needed. This way could slow down the training process, but save cuda memory. 
+Take MIND_small as an example, the number of items is 52771, if we padding or truncate the item decription sequence to a fixed length 30, the size of item description matrix in float32 is 52771 * 30 * 768 * 4 Bytes = 4.9GB, which is too large to be loaded into GPU memory. 
+
+### TODO
+1. Add a new class to store the pre-inferenced embs as a numpy array.
+
+### Notes
 ##### 1. args of run.py
 ###### program specific args
 -   `--input_type` can be `text` or `id`
