@@ -32,11 +32,14 @@ logger = logging.get_logger(__name__)
 
 
 def check_keep_decoders_range(
-    keep_embed_layer,
-    keep_decoders_range,
-    config):
+    config: OPTConfig,
+    keep_embed_layer: bool,
+    keep_decoders_range: Optional[Tuple[int]]):
     # the keep_decoders_range tuple is a left-closed and right-closed interval [a, b] as input 
-    assert len(keep_decoders_range) == 2
+    if keep_decoders_range is None:
+        return None
+    else:
+        assert len(keep_decoders_range) == 2
     
     range_start = keep_decoders_range[0]
     range_end = keep_decoders_range[1]
@@ -66,8 +69,8 @@ class PartialOPTDecoder(OPTPreTrainedModel):
     def __init__(
         self, 
         config: OPTConfig,
-        keep_embed_layer: bool,
-        keep_decoders_range: Tuple[int]):
+        keep_embed_layer: bool = True,
+        keep_decoders_range: Optional[Tuple[int]] = (0, -1)):
         r"""
         Args:
             config (:obj:`OPTConfig`): Model configuration class with all the parameters of the model.
@@ -77,12 +80,15 @@ class PartialOPTDecoder(OPTPreTrainedModel):
             keep_decoders_range (:obj:`Tuple[int]`): A left-closed and right-closed interval as input [a, b], the range of decoders to keep.
         """
         super().__init__(config)
-        keep_decoders_range = check_keep_decoders_range(keep_embed_layer, keep_decoders_range, config)
+        keep_decoders_range = check_keep_decoders_range(config, keep_embed_layer, keep_decoders_range)
         self.keep_embed_layer = keep_embed_layer
         self.keep_decoders_range = keep_decoders_range
         
         self.dropout = config.dropout
         self.layerdrop = config.layerdrop
+        
+        if not self.keep_embed_layer and self.keep_decoders_range is None:
+            raise ValueError("You can't drop both the embedding layer and all the decoders.")
         
         if self.keep_embed_layer:
             self.padding_idx = config.pad_token_id
@@ -96,19 +102,20 @@ class PartialOPTDecoder(OPTPreTrainedModel):
                 self.project_in = nn.Linear(config.word_embed_proj_dim, config.hidden_size, bias=False)
             else:
                 self.project_in = None
+                
+        if self.keep_decoders_range is not None:
+            if self.keep_decoders_range[1] == config.num_hidden_layers:
+            # Note that the only purpose of `config._remove_final_layer_norm` is to keep backward compatibility
+            # with checkpoints that have been fine-tuned before transformers v4.20.1
+            # see https://github.com/facebookresearch/metaseq/pull/164
+                if config.do_layer_norm_before and not config._remove_final_layer_norm:
+                    self.final_layer_norm = nn.LayerNorm(config.hidden_size)
+                else:
+                    self.final_layer_norm = None
 
-        if self.keep_decoders_range[1] == config.num_hidden_layers:
-        # Note that the only purpose of `config._remove_final_layer_norm` is to keep backward compatibility
-        # with checkpoints that have been fine-tuned before transformers v4.20.1
-        # see https://github.com/facebookresearch/metaseq/pull/164
-            if config.do_layer_norm_before and not config._remove_final_layer_norm:
-                self.final_layer_norm = nn.LayerNorm(config.hidden_size)
-            else:
-                self.final_layer_norm = None
-
-        self.layers = nn.ModuleList()
-        for i in range(self.keep_decoders_range[0], self.keep_decoders_range[1]):
-            self.layers.add_module(str(i), OPTDecoderLayer(config))
+            self.layers = nn.ModuleList()
+            for i in range(self.keep_decoders_range[0], self.keep_decoders_range[1]):
+                self.layers.add_module(str(i), OPTDecoderLayer(config))
             
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -341,8 +348,9 @@ class PartialOPTModel(OPTModel):
     
     def __init__(self,
                  config: OPTConfig,
-                 keep_embed_layer: bool,
-                 keep_decoders_range: Tuple[int]):
+                 keep_embed_layer: bool = True,
+                 keep_decoders_range: Optional[Tuple[int]] = (0, -1)):
+
         r"""
         Args:
             config (:obj:`OPTConfig`): Model configuration class with all the parameters of the model.
