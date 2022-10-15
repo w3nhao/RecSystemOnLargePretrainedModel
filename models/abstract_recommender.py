@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from torchmetrics import MetricCollection
-from utils.metrics import MRR, NDCG, HR, get_topk_ranks
+from utils.metrics import MRR, NDCG, HR
 from utils.pylogger import get_pylogger
 from models.sasrec import SASRec
 from models.configs import SeqRecConfig, TextSeqRecConfig
@@ -69,92 +69,26 @@ class SeqRec(pl.LightningModule, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _feature_extract(self, item_id_seq, item_seq_mask, tokenized_ids,
-                         attention_mask):
+    def _feature_extract(self, input):
         raise NotImplementedError
 
-    def forward(self, item_id_seq, item_seq_mask, tokenized_ids,
-                attention_mask):
-        item_embs = self._feature_extract(item_id_seq, item_seq_mask,
-                                          tokenized_ids, attention_mask)
-        output = self.sasrec(item_embs, item_seq_mask)  # (B, L_sas, H_sas)
-        output = self.classification_head(output)
-        return output  # (B, L, N_items)
+    def forward(self, input):
+        raise NotImplementedError
 
     def training_step(self, batch, batch_idx):
-        item_id_seq, target_id_seq, item_seq_mask, \
-                     tokenized_ids, attention_mask = batch
-        seq_emb = self.forward(item_id_seq, item_seq_mask, tokenized_ids,
-                               attention_mask)  # (B, L, N_items)
-        loss = self.loss_fct(seq_emb.reshape(-1, seq_emb.size(-1)),
-                             target_id_seq.reshape(-1))
-        return loss
-
+        raise NotImplementedError
+    
+    @abstractmethod
+    def _val_test_step(self, batch, batch_idx, stage):
+        raise NotImplementedError
+    
     def validation_step(self, batch, batch_idx):
-        item_id_seq, target_id_seq, item_seq_mask, \
-                     tokenized_ids, attention_mask = batch
-        # (B, L, N_items)
-        seq_emb = self.forward(item_id_seq, item_seq_mask, tokenized_ids,
-                               attention_mask)
-        # (B)
-        last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1
-        # (B, N_items)
-        seq_last_emb = gather_indexes(seq_emb, last_item_idx)
-        # (B, 1)
-        last_item_id = target_id_seq.gather(1, last_item_idx.view(-1, 1))
-
-        topk_list = self.hparams.config.topk_list
-        pred_scores = seq_last_emb.softmax(dim=-1)
-        all_ranks = get_topk_ranks(pred_scores=pred_scores,
-                                   target=last_item_id,
-                                   topk=max(topk_list))
-
-        for k in topk_list:
-            for metric_name in METRIC_LIST:
-                metric = self.topk_metric[f"{metric_name}@{k}"]
-                metric.update(all_ranks, last_item_id.numel())
-
-    def validation_epoch_end(self, outputs):
-        topk_list = self.hparams.config.topk_list
-        for topk in topk_list:
-            for metric_name in METRIC_LIST:
-                score = self.topk_metric[f"{metric_name}@{topk}"].compute()
-                if metric_name in ["HR", "NDCG"] and topk == 10:
-                    log_on_progress_bar = True
-                else:
-                    log_on_progress_bar = False
-                self.log(f"val_{metric_name}@{topk}",
-                         score,
-                         on_epoch=True,
-                         prog_bar=log_on_progress_bar,
-                         logger=True,
-                         sync_dist=True)
+        self._val_test_step(batch, batch_idx, "val")
 
     def test_step(self, batch, batch_idx):
-        item_id_seq, target_id_seq, item_seq_mask, \
-                     tokenized_ids, attention_mask = batch
-        # (B, L, N_items)
-        seq_emb = self.forward(item_id_seq, item_seq_mask, tokenized_ids,
-                               attention_mask)
-        # (B)
-        last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1
-        # (B, N_items)
-        seq_last_emb = gather_indexes(seq_emb, last_item_idx)
-        # (B, 1)
-        last_item_id = target_id_seq.gather(1, last_item_idx.view(-1, 1))
-
-        topk_list = self.hparams.config.topk_list
-        pred_scores = seq_last_emb.softmax(dim=-1)
-        all_ranks = get_topk_ranks(pred_scores=pred_scores,
-                                   target=last_item_id,
-                                   topk=max(topk_list))
-
-        for k in topk_list:
-            for metric_name in METRIC_LIST:
-                metric = self.topk_metric[f"{metric_name}@{k}"]
-                metric.update(all_ranks, last_item_id.numel())
-
-    def test_epoch_end(self, outputs):
+        self._val_test_step(batch, batch_idx, "test")
+    
+    def _val_test_epoch_end(self, outputs, stage):
         topk_list = self.hparams.config.topk_list
         for topk in topk_list:
             for metric_name in METRIC_LIST:
@@ -163,20 +97,21 @@ class SeqRec(pl.LightningModule, ABC):
                     log_on_progress_bar = True
                 else:
                     log_on_progress_bar = False
-                self.log(f"test_{metric_name}@{topk}",
+                self.log(f"{stage}_{metric_name}@{topk}",
                          score,
                          on_epoch=True,
                          prog_bar=log_on_progress_bar,
                          logger=True,
                          sync_dist=True)
+    
+    def validation_epoch_end(self, outputs):
+        self._val_test_epoch_end(outputs, "val")
 
+    def test_epoch_end(self, outputs):
+        self._val_test_epoch_end(outputs, "test")
+    
     def configure_optimizers(self):
-        lr = self.hparams.config.lr
-        wd = self.hparams.config.weight_decay
-        optimizer = torch.optim.AdamW(self.parameters(),
-                                      lr=lr,
-                                      weight_decay=wd)
-        return optimizer
+        raise NotImplementedError
 
     @classmethod
     def add_model_specific_args(cls, parent_parser):

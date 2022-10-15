@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
-from transformers import OPTModel
 from utils.pylogger import get_pylogger
+from utils.metrics import get_topk_ranks
 from utils.schedule_functions import get_lr_scheduler_function
 from models.layers import PromptEncoder, DeepPromptEncoder
-from models.abstract_recommender import TextSeqRec
+from models.partial_opt import PartialOPTModel
+from models.abstract_recommender import TextSeqRec, METRIC_LIST
 from models.configs import OPTSeqRecConfig, OPTPromptSeqRecConfig
-from models.utils import mean_pooling, last_pooling
+from models.utils import mean_pooling, last_pooling, gather_indexes
 
 log = get_pylogger(__name__)
 
@@ -21,7 +22,10 @@ class OPTSeqRec(TextSeqRec):
         self.apply(self._init_weights)
 
     def _set_plm_model(self, plm_name):
-        self.opt = OPTModel.from_pretrained(plm_name)
+        self.opt = PartialOPTModel.from_pretrained(
+            plm_name,
+            keep_embed_layer=True,
+            keep_decoders_range=[0, -1])
 
     def _get_item_emb_dim(self):
         return self.opt.config.hidden_size
@@ -44,11 +48,10 @@ class OPTSeqRec(TextSeqRec):
             for param in unfreeze_layers.parameters():
                 param.requires_grad = True
 
-    def _feature_extract(self, item_id_seq, item_seq_mask, tokenized_ids,
-                         attention_mask):
-        tokenized_ids = tokenized_ids.view(-1, tokenized_ids.shape[-1])
+    def _feature_extract(self, input_ids, attention_mask):
+        input_ids = input_ids.view(-1, input_ids.shape[-1])
         attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-        item_embs = self._get_opt_output(tokenized_ids, attention_mask)
+        item_embs = self._get_opt_output(input_ids, attention_mask)
 
         for layer in self.projection:
             item_embs = layer(item_embs)
@@ -58,13 +61,47 @@ class OPTSeqRec(TextSeqRec):
         item_embs = item_embs.view(-1, sasrec_seq_len, sasrec_hidden_size)
         return item_embs
 
-    def _get_opt_output(self, tokenized_ids, attention_mask):
+    def forward(self, item_seq_mask, input_ids, attention_mask):
+        item_embs = self._feature_extract(input_ids, attention_mask)
+        output = self.sasrec(item_embs, item_seq_mask)  # (B, L_sas, H_sas)
+        output = self.classification_head(output)
+        return output  # (B, L, N_items)
+    
+    def training_step(self, batch, batch_idx):
+        target_seq, _, item_seq_mask, input_ids, attention_mask = batch
+        seq_emb = self.forward(
+            item_seq_mask, input_ids, attention_mask)  # (B, L, N_items)
+        loss = self.loss_fct(seq_emb.reshape(-1, seq_emb.size(-1)),
+                             target_seq.reshape(-1))
+        return loss
+    
+    def _val_test_step(self, batch, batch_idx, stage):
+        target_seq, _, item_seq_mask, input_ids, attention_mask = batch
+        
+        seq_emb = self.forward(
+            item_seq_mask, input_ids, attention_mask) # (B, L, N_items)
+        last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1 # (B)
+        seq_last_emb = gather_indexes(seq_emb, last_item_idx) # (B, N_items)
+        last_id = target_seq.gather(1, last_item_idx.view(-1, 1)) # (B, 1)
+
+        topk_list = self.hparams.config.topk_list
+        pred_scores = seq_last_emb.softmax(dim=-1)
+        all_ranks = get_topk_ranks(pred_scores=pred_scores,
+                                   target=last_id,
+                                   topk=max(topk_list))
+
+        for k in topk_list:
+            for metric_name in METRIC_LIST:
+                metric = self.topk_metric[f"{metric_name}@{k}"]
+                metric.update(all_ranks, last_id.numel())
+
+    def _get_opt_output(self, input_ids, attention_mask):
         if self.hparams.config.plm_n_unfreeze_layers == 0:
             with torch.no_grad():
-                output = self.opt(input_ids=tokenized_ids,
+                output = self.opt(input_ids=input_ids,
                                   attention_mask=attention_mask)
         else:
-            output = self.opt(input_ids=tokenized_ids,
+            output = self.opt(input_ids=input_ids,
                               attention_mask=attention_mask)
         # (B * L_sas, L_plm, H_plm)
         sentence_embs = output.last_hidden_state
@@ -201,11 +238,11 @@ class OPTPromptSeqRec(OPTSeqRec):
         # parameters initialization
         self.apply(self._init_weights)
 
-    def _get_opt_output(self, tokenized_ids, attention_mask):
+    def _get_opt_output(self, input_ids, attention_mask):
         pre_seq_len = self.hparams.config.pre_seq_len
         post_seq_len = self.hparams.config.post_seq_len
         last_query_len = self.hparams.config.last_query_len
-        plm_batch_size = tokenized_ids.shape[0]
+        plm_batch_size = input_ids.shape[0]
 
         if pre_seq_len > 0:
             past_key_values = self.prefix_encoder(plm_batch_size)
@@ -214,12 +251,12 @@ class OPTPromptSeqRec(OPTSeqRec):
             prompt_attention_mask = torch.cat(
                 (prefix_attention_mask, attention_mask), dim=1)
             output = self.opt(
-                input_ids=tokenized_ids,
+                input_ids=input_ids,
                 attention_mask=prompt_attention_mask,
                 past_key_values=past_key_values,
             )
         else:
-            output = self.opt(input_ids=tokenized_ids,
+            output = self.opt(input_ids=input_ids,
                               attention_mask=attention_mask)
             prompt_attention_mask = attention_mask
         past_key_values = output.past_key_values
@@ -300,49 +337,148 @@ class OPTPromptSeqRec(OPTSeqRec):
         return config
 
 
-class PreInferOPTSeqRec(OPTSeqRec):
+# class PreInferOPTSeqRec(OPTSeqRec):
 
-    def __init__(self, trainable_opt_part, tokenized_embs_lookup,
-                 config: OPTSeqRecConfig):
-        self.opt = trainable_opt_part
-        self.tokenized_embs_lookup = tokenized_embs_lookup
+#     def __init__(self, config: OPTSeqRecConfig):
+#         self.save_hyperparameters()
+#         super(PreInferOPTSeqRec, self).__init__(self.hparams.config)
 
-        # normalized the tokenized_embs_lookup
-        self.tokenized_embs_lookup = self.tokenized_embs_lookup / torch.norm(
-            self.tokenized_embs_lookup, dim=1, keepdim=True)
+#     def _set_plm_model(self, plm_name):
+#         n_unfreeze = self.hparams.config.plm_n_unfreeze_layers
+#         self.opt = PartialOPTModel.from_pretrained(
+#             plm_name,
+#             keep_embed_layer=False,
+#             keep_decoders_range=[-n_unfreeze, -1])
 
-        # transform the tokenized_embs_lookup to an embedding layer
-        self.tokenized_embs_lookup = nn.Embedding.from_pretrained(
-            self.tokenized_embs_lookup)
-        self.tokenized_embs_lookup.weight.requires_grad = False
+#     def _freeze_plm_layers(self, num_unfreeze_layers):
+#         pass
 
-        self.save_hyperparameters(
-            ignore=["trainable_opt_part", "tokenized_embs_lookup"])
-        super(PreInferOPTSeqRec, self).__init__(self.hparams.config)
+#     def _get_opt_output(self, input_ids, attention_mask):
+#         if self.hparams.config.plm_n_unfreeze_layers == 0:
+#             tokenized_embs = self.tokenized_embs_lookup(input_ids)
+#         else:
+#             tokenized_embs = self.tokenized_embs_lookup(input_ids)
+#             output = self.opt(input_embs=tokenized_embs,
+#                               attention_mask=attention_mask)
 
-    def _set_plm_model(self, plm_name):
-        pass
+#         # (B * L_sas, L_plm, H_plm)
+#         sentence_embs = output.last_hidden_state
+#         pooling_method = self.hparams.config.pooling_method
+#         if pooling_method == "mean":
+#             # (B * L_sas, H_plm)
+#             item_embs = mean_pooling(sentence_embs,
+#                                      attention_mask).type_as(sentence_embs)
+#         elif pooling_method == "last":
+#             # (B * L_sas, H_plm)
+#             item_embs = last_pooling(sentence_embs,
+#                                      attention_mask).type_as(sentence_embs)
+#         return item_embs
 
-    def _freeze_plm_layers(self, num_unfreeze_layers):
-        pass
+#     def _feature_extract(self, item_id_seq, item_seq_mask, token_embs,
+#                          attention_mask):
+#         raise NotImplementedError
 
-    def _get_opt_output(self, tokenized_ids, attention_mask):
-        if self.hparams.config.plm_n_unfreeze_layers == 0:
-            tokenized_embs = self.tokenized_embs_lookup(tokenized_ids)
-        else:
-            tokenized_embs = self.tokenized_embs_lookup(tokenized_ids)
-            output = self.opt(input_embs=tokenized_embs,
-                              attention_mask=attention_mask)
+#     def forward(self, token_embs, attention_mask):
+#         item_embs = self._feature_extract(item_id_seq, item_seq_mask,
+#                                           input_ids, attention_mask)
+#         output = self.sasrec(item_embs, item_seq_mask)  # (B, L_sas, H_sas)
+#         output = self.classification_head(output)
+#         return output  # (B, L, N_items)
 
-        # (B * L_sas, L_plm, H_plm)
-        sentence_embs = output.last_hidden_state
-        pooling_method = self.hparams.config.pooling_method
-        if pooling_method == "mean":
-            # (B * L_sas, H_plm)
-            item_embs = mean_pooling(sentence_embs,
-                                     attention_mask).type_as(sentence_embs)
-        elif pooling_method == "last":
-            # (B * L_sas, H_plm)
-            item_embs = last_pooling(sentence_embs,
-                                     attention_mask).type_as(sentence_embs)
-        return item_embs
+#     def training_step(self, batch, batch_idx):
+#         item_id_seq, target_id_seq, item_seq_mask, \
+#                     input_ids, attention_mask = batch
+#         seq_emb = self.forward(item_id_seq, item_seq_mask, input_ids,
+#                                attention_mask)  # (B, L, N_items)
+#         loss = self.loss_fct(seq_emb.reshape(-1, seq_emb.size(-1)),
+#                              target_id_seq.reshape(-1))
+#         return loss
+
+#     def validation_step(self, batch, batch_idx):
+#         item_id_seq, target_id_seq, item_seq_mask, \
+#                      input_ids, attention_mask = batch
+#         # (B, L, N_items)
+#         seq_emb = self.forward(item_id_seq, item_seq_mask, input_ids,
+#                                attention_mask)
+#         # (B)
+#         last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1
+#         # (B, N_items)
+#         seq_last_emb = gather_indexes(seq_emb, last_item_idx)
+#         # (B, 1)
+#         last_item_id = target_id_seq.gather(1, last_item_idx.view(-1, 1))
+
+#         topk_list = self.hparams.config.topk_list
+#         pred_scores = seq_last_emb.softmax(dim=-1)
+#         all_ranks = get_topk_ranks(pred_scores=pred_scores,
+#                                    target=last_item_id,
+#                                    topk=max(topk_list))
+
+#         for k in topk_list:
+#             for metric_name in METRIC_LIST:
+#                 metric = self.topk_metric[f"{metric_name}@{k}"]
+#                 metric.update(all_ranks, last_item_id.numel())
+
+#     def validation_epoch_end(self, outputs):
+#         topk_list = self.hparams.config.topk_list
+#         for topk in topk_list:
+#             for metric_name in METRIC_LIST:
+#                 score = self.topk_metric[f"{metric_name}@{topk}"].compute()
+#                 if metric_name in ["HR", "NDCG"] and topk == 10:
+#                     log_on_progress_bar = True
+#                 else:
+#                     log_on_progress_bar = False
+#                 self.log(f"val_{metric_name}@{topk}",
+#                          score,
+#                          on_epoch=True,
+#                          prog_bar=log_on_progress_bar,
+#                          logger=True,
+#                          sync_dist=True)
+
+#     def test_step(self, batch, batch_idx):
+#         item_id_seq, target_id_seq, item_seq_mask, \
+#                      input_ids, attention_mask = batch
+#         # (B, L, N_items)
+#         seq_emb = self.forward(item_id_seq, item_seq_mask, input_ids,
+#                                attention_mask)
+#         # (B)
+#         last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1
+#         # (B, N_items)
+#         seq_last_emb = gather_indexes(seq_emb, last_item_idx)
+#         # (B, 1)
+#         last_item_id = target_id_seq.gather(1, last_item_idx.view(-1, 1))
+
+#         topk_list = self.hparams.config.topk_list
+#         pred_scores = seq_last_emb.softmax(dim=-1)
+#         all_ranks = get_topk_ranks(pred_scores=pred_scores,
+#                                    target=last_item_id,
+#                                    topk=max(topk_list))
+
+#         for k in topk_list:
+#             for metric_name in METRIC_LIST:
+#                 metric = self.topk_metric[f"{metric_name}@{k}"]
+#                 metric.update(all_ranks, last_item_id.numel())
+
+#     def test_epoch_end(self, outputs):
+#         topk_list = self.hparams.config.topk_list
+#         for topk in topk_list:
+#             for metric_name in METRIC_LIST:
+#                 score = self.topk_metric[f"{metric_name}@{topk}"].compute()
+#                 if metric_name in ["HR", "NDCG"] and topk == 10:
+#                     log_on_progress_bar = True
+#                 else:
+#                     log_on_progress_bar = False
+#                 self.log(f"test_{metric_name}@{topk}",
+#                          score,
+#                          on_epoch=True,
+#                          prog_bar=log_on_progress_bar,
+#                          logger=True,
+#                          sync_dist=True)
+
+#     def configure_optimizers(self):
+#         lr = self.hparams.config.lr
+#         wd = self.hparams.config.weight_decay
+#         optimizer = torch.optim.AdamW(self.parameters(),
+#                                       lr=lr,
+#                                       weight_decay=wd)
+#         return optimizer
+

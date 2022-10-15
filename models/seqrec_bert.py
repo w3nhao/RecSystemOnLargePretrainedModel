@@ -1,11 +1,13 @@
 import torch
 from transformers import BertModel
 from utils.pylogger import get_pylogger
+from utils.metrics import get_topk_ranks
 from utils.schedule_functions import get_lr_scheduler_function
 from models.layers import DeepPromptEncoder
-from models.abstract_recommender import TextSeqRec
+from models.abstract_recommender import TextSeqRec, METRIC_LIST
+
 from models.configs import BERTSeqRecConfig, BERTPromptSeqRecConfig
-from models.utils import mean_pooling
+from models.utils import mean_pooling, gather_indexes
 
 log = get_pylogger(__name__)
 
@@ -43,13 +45,60 @@ class BERTSeqRec(TextSeqRec):
             for param in unfreeze_layers.parameters():
                 param.requires_grad = True
 
-    def _get_bert_output(self, tokenized_ids, attention_mask):
+    def _feature_extract(self, input_ids, attention_mask):
+        input_ids = input_ids.view(-1, input_ids.shape[-1])
+        attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
+        item_embs = self._get_bert_output(input_ids, attention_mask)
+
+        for layer in self.projection:
+            item_embs = layer(item_embs)
+
+        sasrec_seq_len = self.hparams.config.sasrec_seq_len
+        sasrec_hidden_size = self.hparams.config.sasrec_hidden_size
+        item_embs = item_embs.view(-1, sasrec_seq_len, sasrec_hidden_size)
+        return item_embs
+
+    def forward(self, item_seq_mask, input_ids, attention_mask):
+        item_embs = self._feature_extract(input_ids, attention_mask)
+        output = self.sasrec(item_embs, item_seq_mask)  # (B, L_sas, H_sas)
+        output = self.classification_head(output)
+        return output  # (B, L, N_items)
+    
+    def training_step(self, batch, batch_idx):
+        target_seq, _, item_seq_mask, input_ids, attention_mask = batch
+        seq_emb = self.forward(
+            item_seq_mask, input_ids, attention_mask)  # (B, L, N_items)
+        loss = self.loss_fct(seq_emb.reshape(-1, seq_emb.size(-1)),
+                             target_seq.reshape(-1))
+        return loss
+    
+    def _val_test_step(self, batch, batch_idx, stage):
+        target_seq, _, item_seq_mask, input_ids, attention_mask = batch
+        
+        seq_emb = self.forward(
+            item_seq_mask, input_ids, attention_mask) # (B, L, N_items)
+        last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1 # (B)
+        seq_last_emb = gather_indexes(seq_emb, last_item_idx) # (B, N_items)
+        last_id = target_seq.gather(1, last_item_idx.view(-1, 1)) # (B, 1)
+
+        topk_list = self.hparams.config.topk_list
+        pred_scores = seq_last_emb.softmax(dim=-1)
+        all_ranks = get_topk_ranks(pred_scores=pred_scores,
+                                   target=last_id,
+                                   topk=max(topk_list))
+
+        for k in topk_list:
+            for metric_name in METRIC_LIST:
+                metric = self.topk_metric[f"{metric_name}@{k}"]
+                metric.update(all_ranks, last_id.numel())
+
+    def _get_bert_output(self, input_ids, attention_mask):
         if self.hparams.config.plm_n_unfreeze_layers == 0:
             with torch.no_grad():
-                output = self.bert(input_ids=tokenized_ids,
+                output = self.bert(input_ids=input_ids,
                                    attention_mask=attention_mask)
         else:
-            output = self.bert(input_ids=tokenized_ids,
+            output = self.bert(input_ids=input_ids,
                                attention_mask=attention_mask)
 
         pooling_method = self.hparams.config.pooling_method
@@ -65,12 +114,12 @@ class BERTSeqRec(TextSeqRec):
             item_embs = output.pooler_output  # (B * L_sas, H_plm)
         return item_embs
 
-    def _feature_extract(self, item_id_seq, item_seq_mask, tokenized_ids,
+    def _feature_extract(self, item_id_seq, item_seq_mask, input_ids,
                          attention_mask):
 
-        tokenized_ids = tokenized_ids.view(-1, tokenized_ids.shape[-1])
+        input_ids = input_ids.view(-1, input_ids.shape[-1])
         attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-        item_embs = self._get_bert_output(tokenized_ids, attention_mask)
+        item_embs = self._get_bert_output(input_ids, attention_mask)
 
         for layer in self.projection:
             item_embs = layer(item_embs)
@@ -187,9 +236,9 @@ class BERTPromptSeqRec(BERTSeqRec):
         # parameters initialization
         self.apply(self._init_weights)
 
-    def _get_bert_output(self, tokenized_ids, attention_mask):
+    def _get_bert_output(self, input_ids, attention_mask):
         pre_seq_len = self.hparams.config.pre_seq_len
-        plm_batch_size = tokenized_ids.shape[0]
+        plm_batch_size = input_ids.shape[0]
 
         past_key_values = self.prefix_encoder(plm_batch_size)
         prefix_attention_mask = torch.ones(plm_batch_size,
@@ -197,7 +246,7 @@ class BERTPromptSeqRec(BERTSeqRec):
         prompt_attention_mask = torch.cat(
             (prefix_attention_mask, attention_mask), dim=1)
         output = self.bert(
-            input_ids=tokenized_ids,
+            input_ids=input_ids,
             attention_mask=prompt_attention_mask,
             past_key_values=past_key_values,
         )
