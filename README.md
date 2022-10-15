@@ -1,6 +1,8 @@
 ### Thoughts
-1. For super large model like OPT13B or larger, we split the model into layers and infer the embs layer by layer. This way could save cuda memory when only a few layers are needed to be trained.
-2. Although we can store the pre-inferenced embs as an embedding layer inside the recommender model, it still takes cuda memory. So maybe we can store them as a numpy array and load them as a tensor in dataloader when needed. This way could slow down the training process, but it could save cuda memory.
+1. For super large model like OPT13B or larger, we split the model into layers and infer the embs layer by layer. This way could save cuda memory when only a few layers are needed to be trained. 
+
+2. Although we can store the pre-inferenced embs as an embedding layer inside the recommender model, it still takes cuda memory. So maybe we can store them as a numpy array and load them as a tensor in dataloader when needed. This way could slow down the training process, but it could save cuda memory. 
+Take MIND_small as an example, the number of items is 52771, if we padding or truncate the item decription sequence to a fixed length 30, the size of item description matrix in float32 is 52771 * 30 * 768 * 4 Bytes = 4.9GB, which is too large to be loaded into GPU memory. 
 
 ### TODO
 1. Add a new class to store the pre-inferenced embs as a numpy array.
