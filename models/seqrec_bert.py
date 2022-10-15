@@ -114,21 +114,6 @@ class BERTSeqRec(TextSeqRec):
             item_embs = output.pooler_output  # (B * L_sas, H_plm)
         return item_embs
 
-    def _feature_extract(self, item_id_seq, item_seq_mask, input_ids,
-                         attention_mask):
-
-        input_ids = input_ids.view(-1, input_ids.shape[-1])
-        attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-        item_embs = self._get_bert_output(input_ids, attention_mask)
-
-        for layer in self.projection:
-            item_embs = layer(item_embs)
-
-        sasrec_seq_len = self.hparams.config.sasrec_seq_len
-        sasrec_hidden_size = self.hparams.config.sasrec_hidden_size
-        item_embs = item_embs.view(-1, sasrec_seq_len, sasrec_hidden_size)
-        return item_embs
-
     def _set_bert_lr(self, lr, decay, wd):
         tuning_params = []
         n_layers = self.bert.config.num_hidden_layers
