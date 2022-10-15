@@ -3,6 +3,8 @@ from transformers.models.opt.modeling_opt import (
     OPTPreTrainedModel,
     OPTDecoderLayer,
     OPTLearnedPositionalEmbedding,
+    _make_causal_mask,
+    _expand_mask,
     OPT_INPUTS_DOCSTRING,
     _CHECKPOINT_FOR_DOC,
     _CONFIG_FOR_DOC,
@@ -33,26 +35,30 @@ def check_keep_decoders_range(
     keep_embed_layer,
     keep_decoders_range,
     config):
-    # the keep_decoders_range is a left-closed and right-closed interval as input [a, b]
+    # the keep_decoders_range tuple is a left-closed and right-closed interval [a, b] as input 
     assert len(keep_decoders_range) == 2
     
-    if keep_decoders_range[0] != 0 and keep_embed_layer:
+    range_start = keep_decoders_range[0]
+    range_end = keep_decoders_range[1]
+    assert isinstance(range_start, int) and isinstance(range_end, int)
+    
+    if range_start != 0 and keep_embed_layer:
         raise ValueError(
             "You can't keep keep the embedding layer since you drop the first decoder layer"
         )
+        
+    if range_start < 0:
+        range_start = config.num_hidden_layers + range_start
     
-    assert keep_decoders_range[1] < config.num_hidden_layers
-    assert keep_decoders_range[0] <= keep_decoders_range[1]
+    range_end += 1
+    if range_end <= 0:
+        range_end = config.num_hidden_layers + range_end
     
-    if keep_decoders_range[0] < 0:
-        keep_decoders_range[0] = config.num_hidden_layers + keep_decoders_range[0]
+    assert range_end <= config.num_hidden_layers
+    assert range_start <= range_end
     
-    keep_decoders_range[1] += 1
-    if keep_decoders_range[1] <= 0:
-        keep_decoders_range[1] = config.num_hidden_layers + keep_decoders_range[1]
-    
-    # the keep_decoders_range is a left-closed and right-open interval as output [a, b)
-    return keep_decoders_range
+    # the keep_decoders_range list is a left-closed and right-open interval [a, b) as output 
+    return (range_start, range_end)
 
 
 class PartialOPTDecoder(OPTPreTrainedModel):
@@ -61,14 +67,14 @@ class PartialOPTDecoder(OPTPreTrainedModel):
         self, 
         config: OPTConfig,
         keep_embed_layer: bool,
-        keep_decoders_range: List[int]):
+        keep_decoders_range: Tuple[int]):
         r"""
         Args:
             config (:obj:`OPTConfig`): Model configuration class with all the parameters of the model.
                 Initializing with a config file does not load the weights associated with the model, only the configuration.
                 Check out the :meth:`~transformers.PreTrainedModel.from_pretrained` method to load the model weights.
             keep_embed_layer (:obj:`bool`): Whether to keep the embedding layer.
-            keep_decoders_range (:obj:`List[int]`): A left-closed and right-closed interval as input [a, b], the range of decoders to keep.
+            keep_decoders_range (:obj:`Tuple[int]`): A left-closed and right-closed interval as input [a, b], the range of decoders to keep.
         """
         super().__init__(config)
         keep_decoders_range = check_keep_decoders_range(keep_embed_layer, keep_decoders_range, config)
@@ -119,6 +125,27 @@ class PartialOPTDecoder(OPTPreTrainedModel):
             self.embed_tokens = value
         else:
             raise NotImplementedError("The model drops the input embeddings layer.")
+
+    # Copied from transformers.models.bart.modeling_bart.BartDecoder._prepare_decoder_attention_mask
+    def _prepare_decoder_attention_mask(self, attention_mask, input_shape, inputs_embeds, past_key_values_length):
+        # create causal mask
+        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+        combined_attention_mask = None
+        if input_shape[-1] > 1:
+            combined_attention_mask = _make_causal_mask(
+                input_shape, inputs_embeds.dtype, past_key_values_length=past_key_values_length
+            ).to(inputs_embeds.device)
+
+        if attention_mask is not None:
+            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+            expanded_attn_mask = _expand_mask(attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]).to(
+                inputs_embeds.device
+            )
+            combined_attention_mask = (
+                expanded_attn_mask if combined_attention_mask is None else expanded_attn_mask + combined_attention_mask
+            )
+
+        return combined_attention_mask
 
     def forward(
         self,
@@ -315,28 +342,25 @@ class PartialOPTModel(OPTModel):
     def __init__(self,
                  config: OPTConfig,
                  keep_embed_layer: bool,
-                 keep_decoders_range: List[int]):
+                 keep_decoders_range: Tuple[int]):
         r"""
         Args:
             config (:obj:`OPTConfig`): Model configuration class with all the parameters of the model.
                 Initializing with a config file does not load the weights associated with the model, only the configuration.
                 Check out the :meth:`~transformers.PreTrainedModel.from_pretrained` method to load the model weights.
             keep_embed_layer (:obj:`bool`): Whether to keep the embedding layer.
-            keep_decoders_range (:obj:`List[int]`): A left-closed and right-closed interval as input [a, b], the range of decoders to keep.
+            keep_decoders_range (:obj:`Tuple[int]`): A left-closed and right-closed interval as input [a, b], the range of decoders to keep.
         """
         super(OPTModel, self).__init__(config)
-        keep_decoders_range = check_keep_decoders_range(keep_embed_layer, keep_decoders_range, config)
-        self.keep_embed_layer = keep_embed_layer
-        self.keep_decoders_range = keep_decoders_range
         self.decoder = PartialOPTDecoder(config, keep_embed_layer, keep_decoders_range)
         # Initialize weights and apply final processing
         self.post_init()
 
     def get_input_embeddings(self):
-        raise NotImplementedError("PartialOPTDecoder does not have input embeddings")
+        self.decoder.get_input_embeddings()
 
     def set_input_embeddings(self, value):
-        raise NotImplementedError("PartialOPTDecoder does not have input embeddings")
+        self.decoder.set_input_embeddings(value)
 
     def get_decoder(self):
         return self.decoder
@@ -351,7 +375,8 @@ class PartialOPTModel(OPTModel):
     )
     def forward(
         self,
-        inputs_embeds: torch.FloatTensor = None,
+        input_ids: torch.LongTensor,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
@@ -370,6 +395,7 @@ class PartialOPTModel(OPTModel):
 
         # decoder outputs consists of (dec_features, past_key_value, dec_hidden, dec_attn)
         decoder_outputs = self.decoder(
+            input_ids=input_ids,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             head_mask=head_mask,

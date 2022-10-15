@@ -36,4 +36,4 @@ class TextSeqRecDataset(Dataset):
         item_seq_mask = self.item_seq_masks[idx]
         tokenized_ids = self.tokenized_ids[item_id_seq]
         attention_mask = self.attention_mask[item_id_seq]
-        return item_id_seq, target_id_seq, item_seq_mask, tokenized_ids, attention_mask
+        return target_id_seq, item_id_seq, item_seq_mask, tokenized_ids, attention_mask

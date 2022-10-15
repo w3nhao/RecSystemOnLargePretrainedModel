@@ -25,7 +25,7 @@ class OPTSeqRec(TextSeqRec):
         self.opt = PartialOPTModel.from_pretrained(
             plm_name,
             keep_embed_layer=True,
-            keep_decoders_range=[0, -1])
+            keep_decoders_range=(0, -1))
 
     def _get_item_emb_dim(self):
         return self.opt.config.hidden_size
@@ -337,18 +337,18 @@ class OPTPromptSeqRec(OPTSeqRec):
         return config
 
 
-# class PreInferOPTSeqRec(OPTSeqRec):
+class PreInferOPTSeqRec(OPTSeqRec):
 
-#     def __init__(self, config: OPTSeqRecConfig):
-#         self.save_hyperparameters()
-#         super(PreInferOPTSeqRec, self).__init__(self.hparams.config)
+    def __init__(self, config: OPTSeqRecConfig):
+        self.save_hyperparameters()
+        super(PreInferOPTSeqRec, self).__init__(self.hparams.config)
 
 #     def _set_plm_model(self, plm_name):
 #         n_unfreeze = self.hparams.config.plm_n_unfreeze_layers
 #         self.opt = PartialOPTModel.from_pretrained(
 #             plm_name,
 #             keep_embed_layer=False,
-#             keep_decoders_range=[-n_unfreeze, -1])
+#             keep_decoders_range=(-n_unfreeze, -1))
 
 #     def _freeze_plm_layers(self, num_unfreeze_layers):
 #         pass

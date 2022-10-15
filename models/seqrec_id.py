@@ -30,7 +30,7 @@ class IDSeqRec(SeqRec):
     def _val_test_step(self, batch, batch_idx, stage):
         target_seq, input_seq, seq_mask, _, _ = batch
         
-        seq_emb = self.forward(input_seq) # (B, L, N_items)
+        seq_emb = self.forward(input_seq, seq_mask) # (B, L, N_items)
         last_item_idx = torch.sum(seq_mask, dim=-1) - 1 # (B)
         seq_last_emb = gather_indexes(seq_emb, last_item_idx) # (B, N_items)
         last_id = target_seq.gather(1, last_item_idx.view(-1, 1)) # (B, 1)
