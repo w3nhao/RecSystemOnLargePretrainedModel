@@ -5,34 +5,34 @@ import torch
 
 def get_topk_ranks(pred_scores, target, topk):
     """ get topk ranks of the target in the pred_scores
-    example:
-        import torch
-        
-        pred_scores, topk_idx = torch.randn((2048, 30)).topk(20, dim=1)
-        target = torch.randint(0, 20, (2048, 1))
-
-        hit_rank_arr = (target == topk_idx).nonzero()
-        hit_rank_arr[:, 1:2] = hit_rank_arr[:, 1:2] + 1
-        hit_preds = hit_rank_arr[:, :1]
-        hit_rank = hit_rank_arr[:, 1:2]
-
-        all_rank = torch.zeros_like(target)
-        
-        all_rank[:] = torch.iinfo(torch.int64).max
-        all_rank.scatter_(0, hit_preds, hit_rank)
-
-        for k in [5, 10, 20]:
-            mrr_k = torch.sum(1.0 / all_rank[all_rank <= k]) / 2048
-            print(f"mrr@{k}: {mrr_k.item()}")
-
-        for k in [5, 10, 20]:
-            ndcg_k = torch.sum(1.0 / torch.log2(all_rank[all_rank <= k] + 1)) / 2048
-            print(f"ndcg@{k}: {ndcg_k.item()}")
-            
-        for k in [5, 10, 20]:
-            hit_k = (all_rank <= k).sum()  / 2048
-            print(f"hit@{k}: {hit_k.item()}")
     """
+    # example:
+    #     import torch
+
+    #     pred_scores, topk_idx = torch.randn((2048, 30)).topk(20, dim=1)
+    #     target = torch.randint(0, 20, (2048, 1))
+
+    #     hit_rank_arr = (target == topk_idx).nonzero()
+    #     hit_preds = hit_rank_arr[:, :1]
+    #     hit_rank = hit_rank_arr[:, 1:2] + 1
+
+    #     all_rank = torch.zeros_like(target)
+
+    #     all_rank[:] = torch.iinfo(torch.int64).max
+    #     all_rank.scatter_(0, hit_preds, hit_rank)
+
+    #     for k in [5, 10, 20]:
+    #         mrr_k = torch.sum(1.0 / all_rank[all_rank <= k]) / 2048
+    #         print(f"mrr@{k}: {mrr_k.item()}")
+
+    #     for k in [5, 10, 20]:
+    #         ndcg_k = torch.sum(1.0 / torch.log2(all_rank[all_rank <= k] + 1)) / 2048
+    #         print(f"ndcg@{k}: {ndcg_k.item()}")
+
+    #     for k in [5, 10, 20]:
+    #         hit_k = (all_rank <= k).sum()  / 2048
+    #         print(f"hit@{k}: {hit_k.item()}")
+
     assert target.shape[0] == pred_scores.shape[0]
     assert pred_scores.shape[1] >= topk
 
@@ -41,20 +41,18 @@ def get_topk_ranks(pred_scores, target, topk):
 
     _, topk_idx = pred_scores.topk(topk, dim=1)
 
+    # get hit index and rank, e.g. hit_rank_arr = [[hit_query, rank], ...]
     hit_rank_arr = (target == topk_idx).nonzero()
-
-    hit_rank_arr[:, 1:2] = hit_rank_arr[:, 1:2] + 1
     hit_query = hit_rank_arr[:, :1]
-    hit_rank = hit_rank_arr[:, 1:2]
+    hit_rank = hit_rank_arr[:, 1:2] + 1
 
     all_rank = torch.zeros_like(target)
 
-    # set all rank maximum value of int64
+    # first set all rank to maximum value of int64 or set all rank to topk + 1
     # all_rank[:] = torch.iinfo(torch.int64).max
-
-    # set all rank to topk + 1
     all_rank[:] = topk + 1
 
+    # then scatter the exact rank to the hit query
     all_rank.scatter_(0, hit_query, hit_rank)
     return all_rank
 

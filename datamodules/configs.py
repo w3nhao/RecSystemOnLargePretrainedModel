@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Optional
 
 
@@ -9,7 +8,7 @@ def get_data_configs(dataset):
     item_seq_field = "interactions"
 
     data_dir = f"data/{dataset}/"
-    
+
     if dataset in ["MIND_small", "MIND_large"]:
         inter_table = "behaviors"
         item_table = "news"
@@ -26,8 +25,18 @@ def get_data_configs(dataset):
         old_iid_field = "itemid"
         old_item_text_field = "description"
         old_item_seq_field = "behaviors"
+    elif dataset == "bilibili":
+        inter_table = "behaviors"
+        item_table = "videos"
+
+        old_uid_field = "userid"
+        old_iid_field = "videoid"
+        old_item_text_field = "description"
+        old_item_seq_field = "behaviors"
     else:
-        raise ValueError("dataset must be in ['MIND_small', 'MIND_large', 'hm']")
+        raise ValueError(
+            "dataset must be in ['MIND_small', 'MIND_large', 'hm', 'bilibili']"
+        )
 
     table_configs = {
         inter_table: {
@@ -72,19 +81,22 @@ def get_data_configs(dataset):
     return data_configs
 
 
-@dataclass
 class SeqRecDataModuleConfig:
-    dataset: str
-    plm_name: str = "facebook/opt-125m"
-    min_item_seq_len: int = 5
-    max_item_seq_len: Optional[int] = None
-    sasrec_seq_len: int = 20
-    tokenized_len: int = 20
-    batch_size: int = 64
-    num_workers: int = 6
-    pin_memory: bool = False
 
-    def __post_init__(self):
+    def __init__(self, dataset: str, **kwargs):
+        self.dataset = dataset
+        self.plm_name: str = kwargs.pop("plm_name", "facebook/opt-125m")
+        self.plm_n_unfreeze_layers: int = \
+            kwargs.pop("plm_n_unfreeze_layers", 0)
+        self.min_item_seq_len: int = kwargs.pop("min_item_seq_len", 5)
+        self.max_item_seq_len: Optional[int] = \
+            kwargs.pop("max_item_seq_len", None)
+        self.sasrec_seq_len: int = kwargs.pop("sasrec_seq_len", 20)
+        self.tokenized_len: int = kwargs.pop("tokenized_len", 30)
+        self.batch_size: int = kwargs.pop("batch_size", 64)
+        self.num_workers: int = kwargs.pop("num_workers", 4)
+        self.pin_memory: bool = kwargs.pop("pin_memory", True)
+
         assert self.min_item_seq_len > 0
         assert self.tokenized_len > 0
         assert self.sasrec_seq_len > 0
@@ -92,3 +104,5 @@ class SeqRecDataModuleConfig:
             assert self.max_item_seq_len > 0
             assert self.max_item_seq_len >= self.min_item_seq_len
 
+        if self.plm_n_unfreeze_layers is not None:
+            assert self.plm_n_unfreeze_layers >= -1

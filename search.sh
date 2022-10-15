@@ -25,22 +25,28 @@ TOPK_LIST="5 10 20"
 
 # text encoder
 POOLING_METHOD="mean"
-PRETRAINED_MODEL="facebook/opt-125m"
-UNFREEZE=-1
+PRETRAINED_MODEL="facebook/opt-30b"
+UNFREEZE=0
 PLM_LR=5e-5
 PLM_LR_LAYER_DECAY=0.8
 PROJECTION_N_LAYERS=1
 PROJECTION_INNER_SIZES=""
+
+# pre-inference
+PRE_INFERENCE="True"
+PRE_INFERENCE_BATCH_SIZE=1
+PRE_INFERENCE_DEVICES="0 1 2 3 4 5 6 7"
+PRE_INFERENCE_PRECISION=32
 
 # trainer
 ACCELERATOR="gpu"
 STRATEGY="none"
 MAX_EPOCHS=150
 EARLY_STOPPING=10
-DATASET="hm"
-INPUT_TYPE="id"
+DATASET="MIND_small"
+INPUT_TYPE="text"
 PRECISION=32
-DEVICES="2" 
+DEVICES="0" 
 # 1e-5 7e-5 1e-4 5e-4 1e-3
 # 0.0 0.01 0.1 
 for dim in 1024
@@ -88,7 +94,11 @@ do
                         --last_query_len $LAST_QUERY_LEN \
                         --plm_lr $PLM_LR \
                         --plm_lr_layer_decay $PLM_LR_LAYER_DECAY \
-                        --strategy $STRATEGY 
+                        --strategy $STRATEGY \
+                        --pre_inference $PRE_INFERENCE \
+                        --pre_inference_batch_size $PRE_INFERENCE_BATCH_SIZE \
+                        --pre_inference_devices $PRE_INFERENCE_DEVICES \
+                        --pre_inference_precision $PRE_INFERENCE_PRECISION 
       done
     done
   done

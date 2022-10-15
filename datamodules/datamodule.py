@@ -1,35 +1,20 @@
 import os
+import torch
 import pandas as pd
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
-from datamodules.utils import (
-    DataPreporcessor,
-    ratio_split,
-    str_fields2ndarray,
-    ITEM_ID_SEQ_FIELD,
-    TARGET_FIELD,
-    TEXT_ID_SEQ_FIELD,
-    ATTENTION_MASK_FIELD,
-    str_fields2ndarray,
-)
+from datamodules.utils import (inferenced_embs_exists, ratio_split, str_fields2ndarray,
+                               call_pre_inference, gather_inference_results,
+                               ITEM_ID_SEQ_FIELD, TARGET_FIELD,
+                               TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD,
+                               PRETRAIN_MODEL_ABBR)
+from datamodules.data_preprocessor import DataPreprocessor
 from datamodules.dataset import TextSeqRecDataset
 from datamodules.configs import get_data_configs, SeqRecDataModuleConfig
 
 from utils.pylogger import get_pylogger
 
 log = get_pylogger(__name__)
-
-PRETRAIN_MODEL_ABBR = {
-    "facebook/opt-125m": "OPT125M",
-    "facebook/opt-350m": "OPT350M",
-    "facebook/opt-1.3b": "OPT1.3B",
-    "facebook/opt-2.7b": "OPT2.7B",
-    "facebook/opt-6.7b": "OPT6.7B",
-    "facebook/opt-13b": "OPT13B",
-    "facebook/opt-30b": "OPT30B",
-    "bert-base-uncased": "BERTBASE",
-    "bert-large-uncased": "BERTLARGE",
-}
 
 
 class SeqDataModule(LightningDataModule):
@@ -43,7 +28,12 @@ class SeqDataModule(LightningDataModule):
 
         dataset = dm_config.dataset
         self.data_configs = get_data_configs(dataset)
-        self.tokenizer_abbr = PRETRAIN_MODEL_ABBR[dm_config.plm_name]
+
+        try:
+            self.tokenizer_abbr = PRETRAIN_MODEL_ABBR[dm_config.plm_name]
+        except KeyError:
+            raise ValueError(f"Unsupport plm name: {dm_config.plm_name}")
+
         max_len = dm_config.max_item_seq_len if dm_config.max_item_seq_len else "INF"
         self.processed_dir = os.path.join(
             self.data_configs["data_dir"],
@@ -59,7 +49,7 @@ class SeqDataModule(LightningDataModule):
         self.data_val = None
         self.data_test = None
 
-    def prepare_data(self):
+    def prepare_data(self, args):
         """Download data if needed.
 
         Do not use it to assign state (self.x = y).
@@ -70,7 +60,7 @@ class SeqDataModule(LightningDataModule):
         sasrec_seq_len = self.hparams.dm_config.sasrec_seq_len
         plm_name = self.hparams.dm_config.plm_name
 
-        data_prep = DataPreporcessor(
+        data_prep = DataPreprocessor(
             data_cfg=self.data_configs,
             max_item_seq_len=max_item_seq_len,
             min_item_seq_len=min_item_seq_len,
@@ -90,9 +80,8 @@ class SeqDataModule(LightningDataModule):
             num_items = data_prep.num_items
         else:
             item_table = self.data_configs["item_table"]
-            items_path = os.path.join(
-                self.processed_dir,
-                f"{item_table}_{self.tokenizer_abbr}.processed.tsv")
+            item_file = f"{item_table}_{self.tokenizer_abbr}.processed.tsv"
+            items_path = os.path.join(self.processed_dir, item_file)
             if not os.path.isfile(items_path):
                 data_prep.prepare_data()
                 data_prep.prepare_items(
@@ -109,7 +98,39 @@ class SeqDataModule(LightningDataModule):
                 )
                 num_items = len(items)
 
-        return num_items
+        pre_inference_embs = None
+        if args.input_type == "text" and \
+            args.plm_n_unfreeze_layers > -1 and \
+            args.pre_inference:
+            already_inferenced, embs_file = inferenced_embs_exists(
+                processed_dir=self.processed_dir,
+                plm_name=plm_name,
+                plm_n_unfreeze_layers=args.plm_n_unfreeze_layers
+                )
+            
+            if already_inferenced:
+                pre_inference_embs = torch.load(
+                    os.path.join(self.processed_dir, embs_file)
+                )
+            else:
+                return_code = call_pre_inference(
+                    processed_dir=self.processed_dir,
+                    item_file=item_file,
+                    plm_name=plm_name,
+                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+                    tokenized_len=tokenized_len,
+                    batch_size=args.pre_inference_batch_size,
+                    devices=args.pre_inference_devices,
+                    precision=args.pre_inference_precision,
+                )
+                if return_code == 0:
+                    pre_inference_embs = gather_inference_results(
+                        processed_dir=self.processed_dir,
+                        num_items=num_items,
+                    )
+                else:
+                    raise RuntimeError("Pre-inference failed.")
+        return pre_inference_embs, num_items
 
     def setup(self, stage):
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
@@ -219,23 +240,25 @@ class SeqDataModule(LightningDataModule):
     def load_state_dict(self, state_dict):
         """Things to do when loading checkpoint."""
         pass
-    
+
     @classmethod
     def add_datamodule_specific_args(cls, parent_parser):
         """Add datamodule specific arguments to the parser."""
 
         def int_or_none(x):
             return None if x in ["none", "None", "NONE"] else int(x)
-        
+
         parser = parent_parser.add_argument_group("SeqRecDataModule")
         parser.add_argument("--dataset", type=str, default="MIND_small")
-        parser.add_argument("--min_item_seq_len", type=int, default=5)
-        parser.add_argument("--max_item_seq_len", type=int_or_none, default=None)
         parser.add_argument("--sasrec_seq_len", type=int, default=20)
         parser.add_argument("--tokenized_len", type=int, default=30)
         parser.add_argument("--batch_size", type=int, default=64)
         parser.add_argument("--num_workers", type=int, default=4)
         parser.add_argument("--pin_memory", type=bool, default=False)
+        parser.add_argument("--min_item_seq_len", type=int, default=5)
+        parser.add_argument("--max_item_seq_len",
+                            type=int_or_none,
+                            default=None)
         return parent_parser
 
     @classmethod
@@ -254,5 +277,13 @@ class SeqDataModule(LightningDataModule):
         try:
             config.plm_name = args.plm_name
         except AttributeError:
-            log.info(f"No plm_name in args, use default tokenizer:'{config.plm_name}' to process text.")
+            log.info(
+                f"No plm_name in args, use default tokenizer:'{config.plm_name}' to process text."
+            )
+        try:
+            config.plm_n_unfreeze_layers = args.plm_n_unfreeze_layers
+        except AttributeError:
+            log.info(
+                f"No plm_n_unfreeze_layers in args, use default value: {config.plm_n_unfreeze_layers}."
+            )
         return config

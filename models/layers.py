@@ -119,12 +119,12 @@ class MultiHeadAttention(nn.Module):
         mixed_key_layer = self.key(input_tensor)
         mixed_value_layer = self.value(input_tensor)
 
-        query_layer = self.transpose_for_scores(mixed_query_layer).permute(
-            0, 2, 1, 3)
-        key_layer = self.transpose_for_scores(mixed_key_layer).permute(
-            0, 2, 3, 1)
-        value_layer = self.transpose_for_scores(mixed_value_layer).permute(
-            0, 2, 1, 3)
+        query_layer = self.transpose_for_scores(mixed_query_layer) \
+            .permute(0, 2, 1, 3)
+        key_layer = self.transpose_for_scores(mixed_key_layer) \
+            .permute(0, 2, 3, 1)
+        value_layer = self.transpose_for_scores(mixed_value_layer) \
+            .permute(0, 2, 1, 3)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer)
@@ -134,7 +134,8 @@ class MultiHeadAttention(nn.Module):
         # [batch_size heads seq_len seq_len] scores
         # [batch_size 1 1 seq_len]
         # attention_scores = attention_scores + attention_mask
-        attention_scores = attention_scores + attention_mask.type_as(attention_scores)
+        attention_scores = attention_scores \
+            + attention_mask.type_as(attention_scores)
 
         # Normalize the attention scores to probabilities.
         attention_probs = self.softmax(attention_scores)
@@ -143,10 +144,10 @@ class MultiHeadAttention(nn.Module):
 
         attention_probs = self.attn_dropout(attention_probs)
         context_layer = torch.matmul(attention_probs, value_layer)
-        
+
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (
-            self.all_head_size, )
+        new_context_layer_shape = context_layer.size()[:-2] \
+            + (self.all_head_size, )
         context_layer = context_layer.view(*new_context_layer_shape)
         hidden_states = self.dense(context_layer)
         hidden_states = self.out_dropout(hidden_states)

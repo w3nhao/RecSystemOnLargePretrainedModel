@@ -1,5 +1,5 @@
-from transformers import BertModel
-from models.opt import OPTModel
+import pytorch_lightning as pl
+from transformers import OPTModel, BertModel
 import torch
 
 
