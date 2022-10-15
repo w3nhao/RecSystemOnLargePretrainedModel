@@ -24,7 +24,6 @@ conda activate plmrs
 
 wget https://mirror.sjtu.edu.cn/pytorch-wheels/cu113/torch-1.12.1+cu113-cp38-cp38-linux_x86_64.whl
 pip install torch-1.12.1+cu113-cp38-cp38-linux_x86_64.whl
-pip install https://github.com/Lightning-AI/lightning/archive/refs/heads/master.zip -U
 pip install -r requirements.txt
 
 cd data/setup_scripts
