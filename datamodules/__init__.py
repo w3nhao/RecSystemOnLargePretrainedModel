@@ -1,1 +1,1 @@
-from datamodules.datamodule import SeqDataModule
+from datamodules.datamodule import SeqDataModule, PreInferSeqDataModule

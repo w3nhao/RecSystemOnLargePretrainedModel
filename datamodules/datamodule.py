@@ -1,3 +1,5 @@
+from ast import Return
+from email.policy import default
 import os
 import torch
 import pandas as pd
@@ -10,7 +12,12 @@ from datamodules.utils import (inferenced_embs_exists, ratio_split, str_fields2n
                                PRETRAIN_MODEL_ABBR)
 from datamodules.data_preprocessor import DataPreprocessor
 from datamodules.dataset import TextSeqRecDataset
-from datamodules.configs import get_data_configs, SeqRecDataModuleConfig
+from datamodules.configs import (
+    PreInferSeqRecDMConfig,
+    get_data_configs, 
+    SeqRecDataModuleConfig
+)
+    
 
 from utils.pylogger import get_pylogger
 
@@ -33,7 +40,7 @@ class SeqDataModule(LightningDataModule):
             self.tokenizer_abbr = PRETRAIN_MODEL_ABBR[dm_config.plm_name]
         except KeyError:
             raise ValueError(f"Unsupport plm name: {dm_config.plm_name}")
-
+        
         max_len = dm_config.max_item_seq_len if dm_config.max_item_seq_len else "INF"
         self.processed_dir = os.path.join(
             self.data_configs["data_dir"],
@@ -49,7 +56,7 @@ class SeqDataModule(LightningDataModule):
         self.data_val = None
         self.data_test = None
 
-    def prepare_data(self, args):
+    def prepare_data(self):
         """Download data if needed.
 
         Do not use it to assign state (self.x = y).
@@ -97,40 +104,7 @@ class SeqDataModule(LightningDataModule):
                     header=0,
                 )
                 num_items = len(items)
-
-        pre_inference_embs = None
-        if args.input_type == "text" and \
-            args.plm_n_unfreeze_layers > -1 and \
-            args.pre_inference:
-            already_inferenced, embs_file = inferenced_embs_exists(
-                processed_dir=self.processed_dir,
-                plm_name=plm_name,
-                plm_n_unfreeze_layers=args.plm_n_unfreeze_layers
-                )
-            
-            if already_inferenced:
-                pre_inference_embs = torch.load(
-                    os.path.join(self.processed_dir, embs_file)
-                )
-            else:
-                return_code = call_pre_inference(
-                    processed_dir=self.processed_dir,
-                    item_file=item_file,
-                    plm_name=plm_name,
-                    plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
-                    tokenized_len=tokenized_len,
-                    batch_size=args.pre_inference_batch_size,
-                    devices=args.pre_inference_devices,
-                    precision=args.pre_inference_precision,
-                )
-                if return_code == 0:
-                    pre_inference_embs = gather_inference_results(
-                        processed_dir=self.processed_dir,
-                        num_items=num_items,
-                    )
-                else:
-                    raise RuntimeError("Pre-inference failed.")
-        return pre_inference_embs, num_items
+        return num_items
 
     def setup(self, stage):
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
@@ -287,3 +261,111 @@ class SeqDataModule(LightningDataModule):
                 f"No plm_n_unfreeze_layers in args, use default value: {config.plm_n_unfreeze_layers}."
             )
         return config
+
+
+class PreInferSeqDataModule(SeqDataModule):
+    def __init__(self, dm_config: PreInferSeqRecDMConfig):
+        super().__init__(dm_config)
+    
+    
+    def prepare_data(self):
+        """Download data if needed.
+
+        Do not use it to assign state (self.x = y).
+        """
+        num_items = super().prepare_data()
+        
+        tokenized_len = self.hparams.dm_config.tokenized_len
+        
+        item_table = self.data_configs["item_table"]
+        item_file = f"{item_table}_{self.tokenizer_abbr}.processed.tsv"
+        
+        n_unfreeze_layers = self.hparams.dm_config.n_unfreeze_layers
+        plm_name = self.hparams.dm_config.plm_name
+        pre_inference_batch_size = self.hparams.dm_config.pre_inference_batch_size
+        devices = self.hparams.dm_config.pre_inference_pdevices
+        precision = self.hparams.dm_config.pre_inference_precision
+        num_workers = self.hparams.dm_config.pre_inference_num_workers
+        already_inferenced, embs_file = inferenced_embs_exists(
+            processed_dir=self.processed_dir,
+            plm_name=plm_name,
+            plm_n_unfreeze_layers=n_unfreeze_layers
+            )
+        
+        if already_inferenced:
+            pre_inference_embs = torch.load(
+                os.path.join(self.processed_dir, embs_file)
+            )
+        else:
+            return_code = call_pre_inference(
+                processed_dir=self.processed_dir,
+                item_file=item_file,
+                plm_name=plm_name,
+                plm_n_unfreeze_layers=n_unfreeze_layers,
+                tokenized_len=tokenized_len,
+                batch_size=pre_inference_batch_size,
+                devices=devices,
+                precision=precision,
+                num_workers=num_workers,
+            )
+            if return_code == 0:
+                pre_inference_embs = gather_inference_results(
+                    processed_dir=self.processed_dir,
+                    num_items=num_items,
+                )
+            else:
+                raise RuntimeError("Pre-inference failed.")
+        return num_items
+    
+    @classmethod
+    def add_datamodule_specific_args(cls, parent_parser):
+        """Add datamodule specific arguments to the parser."""
+
+        def int_or_none(x):
+            return None if x in ["none", "None", "NONE"] else int(x)
+
+        parser = parent_parser.add_argument_group("PreInferSeqRecDataModule")
+        parser.add_argument("--dataset", type=str, default="MIND_small")
+        parser.add_argument("--sasrec_seq_len", type=int, default=20)
+        parser.add_argument("--tokenized_len", type=int, default=30)
+        parser.add_argument("--batch_size", type=int, default=64)
+        parser.add_argument("--num_workers", type=int, default=4)
+        parser.add_argument("--pin_memory", type=bool, default=False)
+        parser.add_argument("--min_item_seq_len", type=int, default=5)
+        parser.add_argument("--max_item_seq_len",
+                            type=int_or_none,
+                            default=None)
+        parser.add_argument("--pre_inference_devices",
+                            type=int,
+                            nargs="+",
+                            default=[0, 1, 2, 3, 4, 5 , 6, 7])
+        parser.add_argument("--pre_inference_precision",
+                            type=int, default=32)
+        parser.add_argument("--pre_inference_batch_size",
+                            type=int, default=1)
+        parser.add_argument("--pre_inference_num_workers",
+                            type=int, default=4)
+        return parent_parser
+
+    @classmethod
+    def build_datamodule_config(cls, args):
+        """Build configs from arguments."""
+        config = PreInferSeqRecDMConfig(
+            dataset=args.dataset,
+            plm_name = args.plm_name,
+            plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+            pre_inference_batch_size=args.pre_inference_batch_size,
+            pre_inference_precision=args.pre_inference_precision,
+            pre_inference_devices=args.pre_inference_devices,
+            pre_inference_num_workers=args.pre_inference_num_workers,
+            min_item_seq_len=args.min_item_seq_len,
+            max_item_seq_len=args.max_item_seq_len,
+            sasrec_seq_len=args.sasrec_seq_len,
+            tokenized_len=args.tokenized_len,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+        )
+        return config
+
+

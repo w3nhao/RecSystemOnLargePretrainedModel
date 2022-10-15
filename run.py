@@ -6,7 +6,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.profilers import PyTorchProfiler, AdvancedProfiler
 from transformers import logging
 
-from datamodules import SeqDataModule
+from datamodules import SeqDataModule, PreInferSeqDataModule
 from models import (
     IDSeqRec,
     OPTSeqRec,
@@ -73,7 +73,10 @@ def get_datamodule(args):
     if input_type == 'id':
         data_module = SeqDataModule
     elif input_type == 'text':
-        data_module = SeqDataModule
+        if args.pre_inference:
+            data_module = PreInferSeqDataModule
+        else:
+            data_module = SeqDataModule
     else:
         raise NotImplementedError
     return data_module
@@ -108,7 +111,7 @@ if __name__ == "__main__":
     rec_model = get_model(args=temp_args)
     argparser = rec_model.add_model_specific_args(parent_parser=argparser)
     datamodule = get_datamodule(args=temp_args)
-    argparser = datamodule.add_datamodule_specific_args(argparser)
+    argparser = datamodule.add_datamodule_specific_args(parent_parser=argparser)
 
     # parse args
     args, _ = argparser.parse_known_args()
@@ -117,17 +120,13 @@ if __name__ == "__main__":
     datamodule_config = datamodule.build_datamodule_config(args=args)
     dm = datamodule(datamodule_config)
 
-    # prepare data and build model
-    # when not using pre-inference, pre_inference_embs will be None
-    pre_inference_embs, num_items = dm.prepare_data(args=args)
-    raise
+    # prepare data
+    num_items = dm.prepare_data()
+    
     # build model
     model_config = rec_model.build_model_config(args=args,
                                                 item_token_num=num_items)
-    if args.input_type == "text" and args.pre_inference:
-        model = rec_model(pre_inference_embs, model_config)
-    else:
-        model = rec_model(model_config)
+    model = rec_model(model_config)
 
     # set up trainer
     model_name, version_name, devices_name = get_program_details(args)

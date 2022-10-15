@@ -46,6 +46,14 @@ Then you can run the following command to train the model:
 python run.py --input_type "text" --plm_name "facebook/opt-125m" --dataset "MIND_large"
 ```
 
+### Existing Issues
+if you encounter the following error:
+1. 
+```bash
+RuntimeError: torch_shm_manager at "/opt/anaconda3/envs/plmrs/lib/python3.8/site-packages/torch/bin/torch_shm_manager": could not generate a random directory for manager socket
+```
+Please try to set --num_workers to 0 and --pre_inference_num_workers to 0 if using pre-inference.
+
 ### notes
 ##### 1. args of run.py
 ###### program specific args

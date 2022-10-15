@@ -106,3 +106,20 @@ class SeqRecDataModuleConfig:
 
         if self.plm_n_unfreeze_layers is not None:
             assert self.plm_n_unfreeze_layers >= -1
+
+class PreInferSeqRecDMConfig(SeqRecDataModuleConfig):
+    def __init__(self, dataset: str, plm_n_unfreeze_layers, **kwargs):
+        self.plm_n_unfreeze_layers = plm_n_unfreeze_layers
+        self.pre_inference_batch_size= kwargs.pop("pre_inference_batch_size", 1)
+        self.pre_inference_precision = kwargs.pop("pre_inference_precision", 32)
+        self.pre_inference_num_workers = kwargs.pop("pre_inference_num_workers", 4)
+        self.pre_inference_devices= kwargs.pop(
+            "pre_inference_devices", [0, 1, 2, 3, 4, 5, 6, 7]
+            )
+        if self.plm_n_unfreeze_layers == -1:
+            raise ValueError(
+                f"The plm_n_unfreeze_layers is -1, which means you want to fully fine-tune the PLM. "
+                f"If you want to fully fine-tune the PLM, you should set --pre_inference to False."
+                f"If you want to do pre-inference, please set --plm_n_unfreeze_layers >= 0."
+                )
+        super().__init__(dataset, **kwargs)

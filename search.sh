@@ -8,7 +8,7 @@ MAX_ITEM_SEQ_LEN="None"
 
 # prompt
 USE_PROMPT="False"
-PRE_SEQ_LEN=0
+PRE_SEQ_LEN=5
 POST_SEQ_LEN=0
 LAST_QUERY_LEN=0
 PROMPT_PROJECTION="nonlinear"
@@ -24,8 +24,8 @@ INITIALIZER_RANGE=0.02
 TOPK_LIST="5 10 20"
 
 # text encoder
-POOLING_METHOD="mean"
-PRETRAINED_MODEL="facebook/opt-30b"
+POOLING_METHOD="cls"
+PRETRAINED_MODEL="bert-base-uncased"
 UNFREEZE=0
 PLM_LR=5e-5
 PLM_LR_LAYER_DECAY=0.8
@@ -33,9 +33,10 @@ PROJECTION_N_LAYERS=1
 PROJECTION_INNER_SIZES=""
 
 # pre-inference
-PRE_INFERENCE="True"
+PRE_INFERENCE="False"
 PRE_INFERENCE_BATCH_SIZE=1
 PRE_INFERENCE_DEVICES="0 1 2 3 4 5 6 7"
+PRE_INFERENCE_NUM_WORKERS=0
 PRE_INFERENCE_PRECISION=32
 
 # trainer
@@ -98,7 +99,8 @@ do
                         --pre_inference $PRE_INFERENCE \
                         --pre_inference_batch_size $PRE_INFERENCE_BATCH_SIZE \
                         --pre_inference_devices $PRE_INFERENCE_DEVICES \
-                        --pre_inference_precision $PRE_INFERENCE_PRECISION 
+                        --pre_inference_precision $PRE_INFERENCE_PRECISION \
+                        --pre_inference_num_workers $PRE_INFERENCE_NUM_WORKERS 
       done
     done
   done

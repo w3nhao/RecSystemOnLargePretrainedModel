@@ -111,6 +111,7 @@ def call_pre_inference(
     batch_size=1,
     devices=[0, 1, 2, 3, 4, 5, 6, 7],
     precision=32,
+    num_workers=4,
     inference_script_path="scripts/preinference.py",
 ):
     cmd = ["python", inference_script_path]
@@ -122,6 +123,7 @@ def call_pre_inference(
     cmd += ["--batch_size", str(batch_size)]
     cmd += ["--devices"] + [str(d) for d in devices]
     cmd += ["--precision", str(precision)]
+    cmd += ["--num_workers", str(num_workers)]
     code = subprocess.call(cmd)
     return code
 
