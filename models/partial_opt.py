@@ -423,3 +423,25 @@ class PartialOPTModel(OPTModel):
             hidden_states=decoder_outputs.hidden_states,
             attentions=decoder_outputs.attentions,
         )
+        
+        
+if __name__ == "__main__":
+    
+    # test loading single decoder layer
+    a, b = None, None
+    
+    from transformers import OPTModel
+    opt = PartialOPTModel.from_pretrained(
+        pretrained_model_name_or_path="facebook/opt-125m",
+        keep_embed_layer=False,
+        keep_decoders_range=(2, 2))
+    for name, param in opt.named_parameters():
+        if name=="decoder.layers.2.fc1.weight":
+            a = param
+            
+    opt = OPTModel.from_pretrained("facebook/opt-125m")
+    for name, param in opt.named_parameters():
+        if name=="decoder.layers.2.fc1.weight":
+            b = param
+            
+    assert int((a != b).sum()) == 0

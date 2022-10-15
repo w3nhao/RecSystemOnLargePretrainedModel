@@ -6,33 +6,6 @@ import torch
 def get_topk_ranks(pred_scores, target, topk):
     """ get topk ranks of the target in the pred_scores
     """
-    # example:
-    #     import torch
-
-    #     pred_scores, topk_idx = torch.randn((2048, 30)).topk(20, dim=1)
-    #     target = torch.randint(0, 20, (2048, 1))
-
-    #     hit_rank_arr = (target == topk_idx).nonzero()
-    #     hit_preds = hit_rank_arr[:, :1]
-    #     hit_rank = hit_rank_arr[:, 1:2] + 1
-
-    #     all_rank = torch.zeros_like(target)
-
-    #     all_rank[:] = torch.iinfo(torch.int64).max
-    #     all_rank.scatter_(0, hit_preds, hit_rank)
-
-    #     for k in [5, 10, 20]:
-    #         mrr_k = torch.sum(1.0 / all_rank[all_rank <= k]) / 2048
-    #         print(f"mrr@{k}: {mrr_k.item()}")
-
-    #     for k in [5, 10, 20]:
-    #         ndcg_k = torch.sum(1.0 / torch.log2(all_rank[all_rank <= k] + 1)) / 2048
-    #         print(f"ndcg@{k}: {ndcg_k.item()}")
-
-    #     for k in [5, 10, 20]:
-    #         hit_k = (all_rank <= k).sum()  / 2048
-    #         print(f"hit@{k}: {hit_k.item()}")
-
     assert target.shape[0] == pred_scores.shape[0]
     assert pred_scores.shape[1] >= topk
 
@@ -124,3 +97,85 @@ class HR(RecRetrivalMetric):
 
     def _metric(self, topk_rank):
         return topk_rank.numel()
+
+
+if __name__ == "__main__":
+        # get all ranks example:
+        #     import torch
+
+        #     pred_scores, topk_idx = torch.randn((2048, 30)).topk(20, dim=1)
+        #     target = torch.randint(0, 20, (2048, 1))
+
+        #     hit_rank_arr = (target == topk_idx).nonzero()
+        #     hit_preds = hit_rank_arr[:, :1]
+        #     hit_rank = hit_rank_arr[:, 1:2] + 1
+
+        #     all_rank = torch.zeros_like(target)
+
+        #     all_rank[:] = torch.iinfo(torch.int64).max
+        #     all_rank.scatter_(0, hit_preds, hit_rank)
+
+        #     for k in [5, 10, 20]:
+        #         mrr_k = torch.sum(1.0 / all_rank[all_rank <= k]) / 2048
+        #         print(f"mrr@{k}: {mrr_k.item()}")
+
+        #     for k in [5, 10, 20]:
+        #         ndcg_k = torch.sum(1.0 / torch.log2(all_rank[all_rank <= k] + 1)) / 2048
+        #         print(f"ndcg@{k}: {ndcg_k.item()}")
+
+        #     for k in [5, 10, 20]:
+        #         hit_k = (all_rank <= k).sum()  / 2048
+        #         print(f"hit@{k}: {hit_k.item()}")
+        
+        # TODO: add test case
+        import torch
+        from torchmetrics import RetrievalHitRate, RetrievalMRR, RetrievalNormalizedDCG
+
+        pred_scores, topk_idx = torch.randn((2048, 30)).topk(20, dim=1)
+        indexes = torch.arange(0, 2048).unsqueeze(1).expand_as(pred_scores)
+        target = torch.randint(0, 20, (2048, 1))
+        targets = torch.split(target, 2048 // 10, dim=0)
+        pred_scores = torch.split(pred_scores, 2048 // 10, dim=0)
+        topk_idxes = torch.split(topk_idx, 2048 // 10, dim=0)
+        indexes_list = torch.split(indexes, 2048 // 10, dim=0)
+
+        hr = HR(k=20)
+        ndcg = NDCG(k=20)
+        mrr = MRR(k=20)
+
+        hr1 = RetrievalHitRate(k=20)
+        ndcg1 = RetrievalNormalizedDCG(k=20)
+        mrr1 = RetrievalMRR()
+
+        hit_rank_arrs = []
+        hit_preds = []
+        hit_ranks = []
+        all_ranks = []
+        new_targets = []
+
+        for target, pred_score, topk_idx, indexes in zip(targets, pred_scores, topk_idxes, indexes_list):
+            hit_rank_arr = (target == topk_idx).nonzero()
+            hit_rank_arr[:, 1:2] = hit_rank_arr[:, 1:2] + 1
+            hit_pred = hit_rank_arr[:, :1]
+            hit_rank = hit_rank_arr[:, 1:2]
+            hit_rank_arrs.append(hit_rank_arr)
+            hit_preds.append(hit_pred)
+            hit_ranks.append(hit_rank)
+            all_rank = torch.zeros_like(target)
+            all_rank[:] = torch.iinfo(torch.int64).max
+            all_rank.scatter_(0, hit_pred, hit_rank)
+            all_ranks.append(all_rank)
+            hr.update(all_rank, len(target))
+            ndcg.update(all_rank, len(target))
+            mrr.update(all_rank, len(target))
+
+            new_target = target == topk_idx
+            
+            new_targets.append(new_target)
+            hr1.update(pred_score, new_target, indexes)
+            ndcg1.update(pred_score, new_target, indexes)
+            mrr1.update(pred_score, new_target, indexes)
+
+        assert hr.compute() == hr1.compute()
+        assert ndcg.compute() == ndcg1.compute()
+        assert mrr.compute().float() == mrr1.compute().float()
