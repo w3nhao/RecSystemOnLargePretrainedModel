@@ -27,21 +27,21 @@ class BERTSeqRec(TextSeqRec):
     def _get_item_emb_dim(self):
         return self.bert.config.hidden_size
 
-    def _freeze_plm_layers(self, last_n_unfreeze_layers):
+    def _freeze_plm_layers(self, last_n_unfreeze):
         plm_n_layers = self.bert.config.num_hidden_layers
-        if last_n_unfreeze_layers < -1 or last_n_unfreeze_layers > plm_n_layers:
+        if last_n_unfreeze < -1 or last_n_unfreeze > plm_n_layers:
             raise ValueError(
-                f"last_n_unfreeze_layers {last_n_unfreeze_layers} is not supported.")
+                f"last_n_unfreeze {last_n_unfreeze} is not supported.")
 
-        if last_n_unfreeze_layers == -1:
+        if last_n_unfreeze == -1:
             for param in self.bert.parameters():
                 param.requires_grad = True
         else:
             for param in self.bert.parameters():
                 param.requires_grad = False
 
-        if last_n_unfreeze_layers > 0:
-            unfreeze_layers = self.bert.encoder.layer[-last_n_unfreeze_layers:]
+        if last_n_unfreeze > 0:
+            unfreeze_layers = self.bert.encoder.layer[-last_n_unfreeze:]
             for param in unfreeze_layers.parameters():
                 param.requires_grad = True
 

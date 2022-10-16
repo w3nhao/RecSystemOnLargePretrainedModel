@@ -30,21 +30,21 @@ class OPTSeqRec(TextSeqRec):
     def _get_item_emb_dim(self):
         return self.opt.config.hidden_size
 
-    def _freeze_plm_layers(self, last_n_unfreeze_layers):
+    def _freeze_plm_layers(self, last_n_unfreeze):
         plm_n_layers = self.opt.config.num_hidden_layers
-        if last_n_unfreeze_layers < -1 or last_n_unfreeze_layers > plm_n_layers:
+        if last_n_unfreeze < -1 or last_n_unfreeze > plm_n_layers:
             raise ValueError(
-                f"last_n_unfreeze_layers {last_n_unfreeze_layers} is not supported.")
+                f"last_n_unfreeze {last_n_unfreeze} is not supported.")
 
-        if last_n_unfreeze_layers == -1:
+        if last_n_unfreeze == -1:
             for param in self.opt.parameters():
                 param.requires_grad = True
         else:
             for param in self.opt.parameters():
                 param.requires_grad = False
 
-        if last_n_unfreeze_layers > 0:
-            unfreeze_layers = self.opt.decoder.layers[-last_n_unfreeze_layers:]
+        if last_n_unfreeze > 0:
+            unfreeze_layers = self.opt.decoder.layers[-last_n_unfreeze:]
             for param in unfreeze_layers.parameters():
                 param.requires_grad = True
 
@@ -350,7 +350,7 @@ class PreInferOPTSeqRec(OPTSeqRec):
 #             keep_embed_layer=False,
 #             keep_decoders_range=(-n_unfreeze, -1))
 
-#     def _freeze_plm_layers(self, last_n_unfreeze_layers):
+#     def _freeze_plm_layers(self, last_n_unfreeze):
 #         pass
 
 #     def _get_opt_output(self, input_ids, attention_mask):
