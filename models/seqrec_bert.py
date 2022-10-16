@@ -114,10 +114,10 @@ class BERTSeqRec(TextSeqRec):
             item_embs = output.pooler_output  # (B * L_sas, H_plm)
         return item_embs
 
-    def _set_bert_lr(self, lr, decay, wd):
+    def _set_bert_lr(self, lr, layer_decay, weight_decay):
         tuning_params = []
         n_layers = self.bert.config.num_hidden_layers
-        lrs = [lr * (decay**(n_layers - i)) for i in range(n_layers)]
+        lrs = [lr * (layer_decay**(n_layers - i)) for i in range(n_layers)]
         no_weight_decay = ["bias", "LayerNorm.weight"]
 
         for name, params in self.bert.named_parameters():
@@ -131,7 +131,7 @@ class BERTSeqRec(TextSeqRec):
             if any(nd in name for nd in no_weight_decay):
                 p.update(weight_decay=0.0)
             else:
-                p.update(weight_decay=wd)
+                p.update(weight_decay=weight_decay)
             tuning_params.append(p)
 
         tuning_params = [

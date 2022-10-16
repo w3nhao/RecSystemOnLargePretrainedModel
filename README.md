@@ -1,8 +1,7 @@
 
 ### how to use
 Clone this repository first, and download the data from [here](https://share.weiyun.com/eJh8dB51), uncompress data.tar to the folder `data/`  
-
-The data link need a password, please contact me via wenhao.deng@foxmail.com for the password.  
+If you want to gain accessment of the data, please contact me via wenhao.deng@foxmail.com for the password.  
 
 The file structure should be like this:
 ```
@@ -39,24 +38,33 @@ Then you can run the following command to train the model:
 python run.py --input_type "text" --plm_name "facebook/opt-125m" --dataset "MIND_large"
 ```
 
-### existing Issues
+### existing program issues
 if you encounter the following error:
-1. 
+
 ```bash
 RuntimeError: torch_shm_manager at "/opt/anaconda3/envs/plmrs/lib/python3.8/site-packages/torch/bin/torch_shm_manager": could not generate a random directory for manager socket
 ```
-Please try to set --num_workers to 0 and --pre_inference_num_workers to 0 if using pre-inference.
+Probably the reason is that you are using a shared server, and the shared server has a limit on hard drive space. You can try to delete cache files and try again.
+```bash
+cd ~/.cache/huggingface/hub
+rm tmp*
+```
+Or setting `--num_workers` to 0 and `--pre_inference_num_workers` to 0 if using pre-inference.
 
-### thoughts
-1. For super large model like OPT13B or larger, we split the model into layers and infer the embs layer by layer. This way could save cuda memory when only a few layers are needed to be trained. 
+### thoughts of implementation
+1. For super large model like OPT13B or larger, we split the model into layers and infer the embs layer by layer. It could save GPU memory when only a few layers are needed to be fine-tuned. 
 
-2. Although we can store the pre-inferenced embs as an embedding layer inside the recommender model, it still takes cuda memory. So maybe we can store them as a numpy array and load them as a tensor in dataloader when needed. This way could slow down the training process, but save cuda memory. 
+2. Although we can store the pre-inferenced embs as an embedding layer inside the recommender model, it still takes GPU memory. So we store them as a numpy array and load them as a tensor in dataloader when needed. This slow down the training process, but save GPU memory. 
 Take MIND_small as an example, the number of items is 52771, if we padding or truncate the item decription sequence to a fixed length 30, the size of item description matrix in float32 is 52771 * 30 * 768 * 4 Bytes = 4.9GB, which is too large to be loaded into GPU memory. 
+
 
 ### TODO
 1. Add a new class to store the pre-inferenced embs as a numpy array.
+2. BCE loss should access all the items, check [Accessing DataLoaders within LightningModule](https://pytorch-lightning.readthedocs.io/en/latest/guides/data.html#accessing-dataloaders-within-lightningmodule).
+3. When pre-inferencing, every time the script would load the tsv file of preprocessed item input_ids and attention_mask. For speeding up the pre-inference process, consider using feather/Jay format to store the item preprocessed data.
 
-### Notes
+
+### notes
 ##### 1. args of run.py
 ###### program specific args
 -   `--input_type` can be `text` or `id`
@@ -65,7 +73,7 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 -   `--early_stop_patience` is the number of epochs to wait before early stopping
 -   `--batch_size` is the batch size
 -   `--num_workers` is the number of workers for data loading
--   `--devices` is the GPUs to use, should be specify as a list of integers: "0 1 2 3" when using multiple GPUs
+-   `--devices` is the accelerators to use, should be specify as a list of integers: "0 1 2 3" when using multiple accelerators
 -   `--accelerator` is the accelerator to use, default is `gpu`
 -   `--precision` is the precision to use, default is `32`
 -   `--min_item_seq_len` is the minimum length of item sequence after preprocessing
@@ -109,8 +117,10 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 -   `--pre_inference_batch_size` is the batch size of inference
 -   `--pre_inference_devices` is the devices of inference
 -   `--pre_inference_precision` is the precision of inference
+-   `--pre_inference_num_workers` is the number of workers for data loading of inference
 
-##### 2. If you want to manually inferencing before traininig, try command like the following:
+##### 2. If you want to manually inferencing before traininig
+After sucessfully generating the processed data by specifying `--pre-inference` as `False`. You can find the preprocessed data under `data/[dataset_name]/` and use the following command to manually inferencing before training.
 ```bash
 python datamodules/preinference.py \ 
     --processed_dir data/MIND_small/MIND_small_maxlen@INF_minlen@5_toklen@30_saslen@20_processed \
@@ -122,7 +132,7 @@ python datamodules/preinference.py \
     --devices 0 1 2 3 4 5 6 7 \
     --precision 32
 ```
-The output of the above command is the inference result of all items descriptions text sequences, which is saved in `--processed_dir`. The output format are pytorch tensors, each tensor is the embedding of the corresponding text sequence. The length of the number of items, and the shape of each tensor is `[30, 768]` in this example. The name of the output file is `OPT125M_freeze@12_inferenced_embs_for_unfreeze@0_0.pt`. If only using one GPU, then the final number is `0`. If using multiple GPUs, then the final number is the device id of the accelerator.  
+The output of the above command is the inference result of all items descriptions text sequences, which is saved in `--processed_dir`. The output format are pytorch tensors, each tensor is the embedding of the corresponding text sequence. The length of the number of items, and the shape of each tensor is `[30, 768]` in this example. The name of the output file is `OPT125M_freeze@12_inferenced_embs_for_unfreeze@0_0.pt`. If only using one accelerator, then the final number is `0`. If using multiple accelerators, then the final number is the device id of the accelerator.  
 
 After that you should run the following command to sort the output embs by item id and to collect all the results if using multiple accelerators:
 ```bash
@@ -131,7 +141,7 @@ python datamodules/preinference_collect.py \
     --plm_name facebook/opt-125m 
 ```
 
-For datamodels/preinference.py:
+For datamodules/preinference.py:
 -   `--processed_dir` is the directory of the processed data
 -   `--processed_items_file` is the file name of the item file
 -   `--plm_name` is the name of the pretrained model
@@ -141,6 +151,6 @@ For datamodels/preinference.py:
 -   `--devices` is the devices to be used
 -   `--precision` is the precision of the model, can be 16 or 32
 
-For datamodels/preinference_collect.py:
+For datamodules/preinference_collect.py:
 -   `--processed_dir` is the directory of the processed data
 -   `--plm_name` is the name of the pretrained model

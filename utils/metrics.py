@@ -100,34 +100,7 @@ class HR(RecRetrivalMetric):
 
 
 if __name__ == "__main__":
-        # get all ranks example:
-        #     import torch
-
-        #     pred_scores, topk_idx = torch.randn((2048, 30)).topk(20, dim=1)
-        #     target = torch.randint(0, 20, (2048, 1))
-
-        #     hit_rank_arr = (target == topk_idx).nonzero()
-        #     hit_preds = hit_rank_arr[:, :1]
-        #     hit_rank = hit_rank_arr[:, 1:2] + 1
-
-        #     all_rank = torch.zeros_like(target)
-
-        #     all_rank[:] = torch.iinfo(torch.int64).max
-        #     all_rank.scatter_(0, hit_preds, hit_rank)
-
-        #     for k in [5, 10, 20]:
-        #         mrr_k = torch.sum(1.0 / all_rank[all_rank <= k]) / 2048
-        #         print(f"mrr@{k}: {mrr_k.item()}")
-
-        #     for k in [5, 10, 20]:
-        #         ndcg_k = torch.sum(1.0 / torch.log2(all_rank[all_rank <= k] + 1)) / 2048
-        #         print(f"ndcg@{k}: {ndcg_k.item()}")
-
-        #     for k in [5, 10, 20]:
-        #         hit_k = (all_rank <= k).sum()  / 2048
-        #         print(f"hit@{k}: {hit_k.item()}")
-        
-        # TODO: add test case
+        # test get_topk_ranks
         import torch
         from torchmetrics import RetrievalHitRate, RetrievalMRR, RetrievalNormalizedDCG
 
@@ -155,9 +128,8 @@ if __name__ == "__main__":
 
         for target, pred_score, topk_idx, indexes in zip(targets, pred_scores, topk_idxes, indexes_list):
             hit_rank_arr = (target == topk_idx).nonzero()
-            hit_rank_arr[:, 1:2] = hit_rank_arr[:, 1:2] + 1
             hit_pred = hit_rank_arr[:, :1]
-            hit_rank = hit_rank_arr[:, 1:2]
+            hit_rank = hit_rank_arr[:, 1:2] + 1
             hit_rank_arrs.append(hit_rank_arr)
             hit_preds.append(hit_pred)
             hit_ranks.append(hit_rank)

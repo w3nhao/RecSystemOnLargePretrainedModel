@@ -56,9 +56,10 @@ def check_keep_decoders_range(
     range_end += 1
     if range_end <= 0:
         range_end = config.num_hidden_layers + range_end
-    
-    assert range_end <= config.num_hidden_layers
-    assert range_start <= range_end
+        
+    assert range_start >= 0 
+    assert range_end >= range_start
+    assert config.num_hidden_layers >= range_end
     
     # the keep_decoders_range list is a left-closed and right-open interval [a, b) as output 
     return (range_start, range_end)
