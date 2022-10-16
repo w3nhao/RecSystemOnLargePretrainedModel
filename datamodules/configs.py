@@ -1,5 +1,5 @@
 from typing import Optional
-
+from transformers import AutoConfig
 
 def get_data_configs(dataset):
     uid_field = "user_id"
@@ -86,8 +86,8 @@ class SeqRecDataModuleConfig:
     def __init__(self, dataset: str, **kwargs):
         self.dataset = dataset
         self.plm_name: str = kwargs.pop("plm_name", "facebook/opt-125m")
-        self.plm_n_unfreeze_layers: int = \
-            kwargs.pop("plm_n_unfreeze_layers", 0)
+        self.plm_last_n_unfreeze: int = \
+            kwargs.pop("plm_last_n_unfreeze", 0)
         self.min_item_seq_len: int = kwargs.pop("min_item_seq_len", 5)
         self.max_item_seq_len: Optional[int] = \
             kwargs.pop("max_item_seq_len", None)
@@ -97,6 +97,8 @@ class SeqRecDataModuleConfig:
         self.num_workers: int = kwargs.pop("num_workers", 4)
         self.pin_memory: bool = kwargs.pop("pin_memory", True)
 
+        plm_config = AutoConfig.from_pretrained(self.plm_name)
+        
         assert self.min_item_seq_len > 0
         assert self.tokenized_len > 0
         assert self.sasrec_seq_len > 0
@@ -104,22 +106,23 @@ class SeqRecDataModuleConfig:
             assert self.max_item_seq_len > 0
             assert self.max_item_seq_len >= self.min_item_seq_len
 
-        if self.plm_n_unfreeze_layers is not None:
-            assert self.plm_n_unfreeze_layers >= -1
+        if self.plm_last_n_unfreeze is not None:
+            assert self.plm_last_n_unfreeze >= -1
+            assert self.plm_last_n_unfreeze <= plm_config.num_hidden_layers
 
 class PreInferSeqRecDMConfig(SeqRecDataModuleConfig):
-    def __init__(self, dataset: str, plm_n_unfreeze_layers, **kwargs):
-        self.plm_n_unfreeze_layers = plm_n_unfreeze_layers
+    def __init__(self, dataset: str, plm_last_n_unfreeze, **kwargs):
+        self.plm_last_n_unfreeze = plm_last_n_unfreeze
         self.pre_inference_batch_size= kwargs.pop("pre_inference_batch_size", 1)
         self.pre_inference_precision = kwargs.pop("pre_inference_precision", 32)
         self.pre_inference_num_workers = kwargs.pop("pre_inference_num_workers", 4)
         self.pre_inference_devices= kwargs.pop(
             "pre_inference_devices", [0, 1, 2, 3, 4, 5, 6, 7]
             )
-        if self.plm_n_unfreeze_layers == -1:
+        if self.plm_last_n_unfreeze == -1:
             raise ValueError(
-                f"The plm_n_unfreeze_layers is -1, which means you want to fully fine-tune the PLM. "
+                f"The plm_last_n_unfreeze is -1, which means you want to fully fine-tune the PLM. "
                 f"If you want to fully fine-tune the PLM, you should set --pre_inference to False."
-                f"If you want to do pre-inference, please set --plm_n_unfreeze_layers >= 0."
+                f"If you want to do pre-inference, please set --plm_last_n_unfreeze >= 0."
                 )
         super().__init__(dataset, **kwargs)

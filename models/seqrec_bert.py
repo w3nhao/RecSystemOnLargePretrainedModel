@@ -27,21 +27,21 @@ class BERTSeqRec(TextSeqRec):
     def _get_item_emb_dim(self):
         return self.bert.config.hidden_size
 
-    def _freeze_plm_layers(self, num_unfreeze_layers):
+    def _freeze_plm_layers(self, last_n_unfreeze_layers):
         plm_n_layers = self.bert.config.num_hidden_layers
-        if num_unfreeze_layers < -1 or num_unfreeze_layers > plm_n_layers:
+        if last_n_unfreeze_layers < -1 or last_n_unfreeze_layers > plm_n_layers:
             raise ValueError(
-                f"num_unfreeze_layers {num_unfreeze_layers} is not supported.")
+                f"last_n_unfreeze_layers {last_n_unfreeze_layers} is not supported.")
 
-        if num_unfreeze_layers == -1:
+        if last_n_unfreeze_layers == -1:
             for param in self.bert.parameters():
                 param.requires_grad = True
         else:
             for param in self.bert.parameters():
                 param.requires_grad = False
 
-        if num_unfreeze_layers > 0:
-            unfreeze_layers = self.bert.encoder.layer[-num_unfreeze_layers:]
+        if last_n_unfreeze_layers > 0:
+            unfreeze_layers = self.bert.encoder.layer[-last_n_unfreeze_layers:]
             for param in unfreeze_layers.parameters():
                 param.requires_grad = True
 
@@ -93,7 +93,7 @@ class BERTSeqRec(TextSeqRec):
                 metric.update(all_ranks, last_id.numel())
 
     def _get_bert_output(self, input_ids, attention_mask):
-        if self.hparams.config.plm_n_unfreeze_layers == 0:
+        if self.hparams.config.plm_last_n_unfreeze == 0:
             with torch.no_grad():
                 output = self.bert(input_ids=input_ids,
                                    attention_mask=attention_mask)
@@ -142,7 +142,7 @@ class BERTSeqRec(TextSeqRec):
     def configure_optimizers(self):
         lr = self.hparams.config.lr
         wd = self.hparams.config.weight_decay
-        if self.hparams.config.plm_n_unfreeze_layers == 0:
+        if self.hparams.config.plm_last_n_unfreeze == 0:
             optimizer = torch.optim.AdamW(self.parameters(),
                                           lr=lr,
                                           weight_decay=wd)
@@ -183,7 +183,7 @@ class BERTSeqRec(TextSeqRec):
     def add_model_specific_args(cls, parent_parser):
         parser = super(BERTSeqRec, cls).add_model_specific_args(parent_parser)
         parser = parent_parser.add_argument_group("BERTSeqRec")
-        parser.add_argument("--plm_n_unfreeze_layers", type=int, default=0)
+        parser.add_argument("--plm_last_n_unfreeze", type=int, default=0)
         # shared parameters of fine-tuneing PLM
         parser.add_argument("--plm_lr", type=float, default=1e-5)
         parser.add_argument("--plm_lr_layer_decay", type=float, default=0.8)
@@ -194,7 +194,7 @@ class BERTSeqRec(TextSeqRec):
     def build_model_config(cls, args, item_token_num):
         config = BERTSeqRecConfig(
             item_token_num=item_token_num,
-            plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+            plm_last_n_unfreeze=args.plm_last_n_unfreeze,
             plm_lr=args.plm_lr,
             plm_lr_layer_decay=args.plm_lr_layer_decay,
             projection_n_layers=args.projection_n_layers,
@@ -264,7 +264,7 @@ class BERTPromptSeqRec(BERTSeqRec):
     def build_model_config(cls, args, item_token_num):
         config = BERTPromptSeqRecConfig(
             item_token_num=item_token_num,
-            plm_n_unfreeze_layers=args.plm_n_unfreeze_layers,
+            plm_last_n_unfreeze=args.plm_last_n_unfreeze,
             plm_lr=args.plm_lr,
             plm_lr_layer_decay=args.plm_lr_layer_decay,
             projection_n_layers=args.projection_n_layers,

@@ -24,11 +24,11 @@ class TextSeqRecConfig(SeqRecConfig):
 
     def __init__(self, item_token_num: int, **kwargs):
         self.plm_name = kwargs.pop("plm_name", 'facebook/opt-125m')
-        self.plm_n_unfreeze_layers = kwargs.pop("plm_n_unfreeze_layers", 0)
+        self.plm_last_n_unfreeze = kwargs.pop("plm_last_n_unfreeze", 0)
 
         plm_lr = kwargs.pop("plm_lr", 1e-5)
         plm_lr_layer_decay = kwargs.pop("plm_lr_layer_decay", 0.8)
-        if self.plm_n_unfreeze_layers != 0:
+        if self.plm_last_n_unfreeze != 0:
             self.plm_lr = plm_lr
             self.plm_lr_layer_decay = plm_lr_layer_decay
 

@@ -24,7 +24,7 @@ INITIALIZER_RANGE=0.02
 TOPK_LIST="5 10 20"
 
 # text encoder
-POOLING_METHOD="cls"
+POOLING_METHOD="mean"
 PRETRAINED_MODEL="bert-base-uncased"
 UNFREEZE=0
 PLM_LR=5e-5
@@ -46,7 +46,7 @@ MAX_EPOCHS=150
 EARLY_STOPPING=10
 DATASET="MIND_small"
 INPUT_TYPE="text"
-PRECISION=32
+PRECISION=16
 DEVICES="0" 
 # 1e-5 7e-5 1e-4 5e-4 1e-3
 # 0.0 0.01 0.1 
@@ -83,7 +83,7 @@ do
                         --topk_list $TOPK_LIST \
                         --tokenized_len $TOKENIZED_LEN \
                         --plm_name $PRETRAINED_MODEL \
-                        --plm_n_unfreeze_layers $UNFREEZE \
+                        --plm_last_n_unfreeze $UNFREEZE \
                         --projection_n_layers $PROJECTION_N_LAYERS \
                         --projection_inner_sizes $PROJECTION_INNER_SIZES \
                         --use_prompt $USE_PROMPT \

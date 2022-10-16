@@ -65,7 +65,7 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 
 
 ### notes
-##### 1. args of run.py
+##### 1. Args of `run.py`
 ###### program specific args
 -   `--input_type` can be `text` or `id`
 -   `--dataset` can be `MIND_large` or `MIND_small`
@@ -97,7 +97,7 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 ###### plm specific args
 -   `--tokenized_len` is the length of tokenized sequence for PLM
 -   `--plm_name` can be `facebook/opt-125m` to `facebook/opt-66b` or `bert-base-uncased` to `bert-large-uncased`
--   `--plm_n_unfreeze_layers` can be the number of layers to be unfrozen, default is 0, which means all layers are frozen. However, if you want to use all layers of the pretrained model, you should set it to -1, rather than pretrain model's `num_hidden_layers`, which would caused an ValueError in this programe.
+-   `--plm_last_n_unfreeze` can be the number of layers to be unfrozen, default is 0, which means all layers are frozen. However, if you want to use all layers of the pretrained model, you should set it to -1, rather than pretrain model's `num_hidden_layers`, which would caused an ValueError in this programe.
 -   `--plm_lr` is the learning rate for PLM when fine-tuning
 -   `--plm_lr_layer_decay` is the learning rate decay for each layer of PLM when fine-tuning
 -   `--projection_n_layers` is the number of projection layers which connect PLM and SASRec
@@ -109,8 +109,8 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 -   `--prompt_projection` can be `True` or `False`
 -   `--prompt_hidden_size` can be the hidden size of prompt
 -   `--pre_seq_len` is the length of deep prefix prompt
--   `--post_seq_len` is the length of deep suffix prompt
--   `--last_query_len` is the length of last shallow prompt when using `post_seq_len` 
+-   `--post_seq_len` is the length of deep suffix prompt, only used when model is OPT
+-   `--last_query_len` is the length of last shallow prompt, only used when model is OPT
 
 ###### pre-inference specific args
 -   `--pre_inference` can be `True` or `False`, if it is `True`, then use `pre_inference_batch_size`, `pre_inference_devices` and `pre_inference_precision` to do inference before training using the frozen part of PLM model
@@ -119,38 +119,32 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 -   `--pre_inference_precision` is the precision of inference
 -   `--pre_inference_num_workers` is the number of workers for data loading of inference
 
-##### 2. If you want to manually inferencing before traininig
-After sucessfully generating the processed data by specifying `--pre-inference` as `False`. You can find the preprocessed data under `data/[dataset_name]/` and use the following command to manually inferencing before training.
+##### 2. manually inferencing before traininig
+Use command like following:
 ```bash
 python datamodules/preinference.py \ 
-    --processed_dir data/MIND_small/MIND_small_maxlen@INF_minlen@5_toklen@30_saslen@20_processed \
-    --processed_items_file news_OPT125M.processed.tsv \
-    --plm_name facebook/opt-125m \
-    --plm_n_unfreeze_layers 0 \
+    --dataset "MIND_small" \
+    --plm_name "facebook/opt-125m" \
+    --sasrec_seq_len 20 \
     --tokenized_len 30 \
-    --batch_size 1 \
-    --devices 0 1 2 3 4 5 6 7 \
-    --precision 32
-```
-The output of the above command is the inference result of all items descriptions text sequences, which is saved in `--processed_dir`. The output format are pytorch tensors, each tensor is the embedding of the corresponding text sequence. The length of the number of items, and the shape of each tensor is `[30, 768]` in this example. The name of the output file is `OPT125M_freeze@12_inferenced_embs_for_unfreeze@0_0.pt`. If only using one accelerator, then the final number is `0`. If using multiple accelerators, then the final number is the device id of the accelerator.  
-
-After that you should run the following command to sort the output embs by item id and to collect all the results if using multiple accelerators:
-```bash
-python datamodules/preinference_collect.py \
-    --processed_dir data/MIND_small/MIND_small_maxlen@INF_minlen@5_toklen@30_saslen@20_processed \
-    --plm_name facebook/opt-125m 
+    --min_item_seq_len 5 \
+    --max_item_seq_len None \
+    --pre_inference_devices "0 1 2 3 4 5 6 7" \
+    --pre_inference_precision 32 \
+    --pre_inference_batch_size 1 \
+    --pre_inference_num_workers 4 \
+    --last_n_unfreeze 0
 ```
 
-For datamodules/preinference.py:
--   `--processed_dir` is the directory of the processed data
--   `--processed_items_file` is the file name of the item file
--   `--plm_name` is the name of the pretrained model
--   `--plm_n_unfreeze_layers` is the number of layers to be unfrozen
--   `--tokenized_len` is the length of the tokenized text
--   `--batch_size` is the batch size
--   `--devices` is the devices to be used
--   `--precision` is the precision of the model, can be 16 or 32
-
-For datamodules/preinference_collect.py:
--   `--processed_dir` is the directory of the processed data
--   `--plm_name` is the name of the pretrained model
+Args of `preinference.py`:
+-   `--dataset` can be `MIND_large`, `MIND_small`, `hm` or `bilibili`
+-   `--plm_name` can be `facebook/opt-125m` to `facebook/opt-66b` or `bert-base-uncased` to `bert-large-uncased`
+-   `--sasrec_seq_len` is the length of item sequence for SASRec
+-   `--tokenized_len` is the length of tokenized sequence for PLM
+-   `--min_item_seq_len` is the minimum length of item sequence after preprocessing
+-   `--max_item_seq_len` is the maximum length of item sequence after preprocessing
+-   `--pre_inference_devices` is the devices of inference
+-   `--pre_inference_precision` is the precision of inference
+-   `--pre_inference_batch_size` is the batch size of inference
+-   `--pre_inference_num_workers` is the number of workers for data loading of inference
+-   `--plm_last_n_unfreeze` is the number of layers to be unfrozen, default is 0, which means all layers are frozen. However, if you want to use all layers of the pretrained model, you should set it to -1, rather than pretrain model's `num_hidden_layers`, which would caused an ValueError in this programe. In the pre-inference stage, the unfrozen layers are not used.

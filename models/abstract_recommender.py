@@ -160,9 +160,9 @@ class TextSeqRec(SeqRec, ABC):
 
     def _set_feature_extractor(self, config):
         plm_name = config.plm_name
-        num_unfreeze_layers = config.plm_n_unfreeze_layers
+        last_n_unfreeze_layers = config.plm_last_n_unfreeze
         self._set_plm_model(plm_name)
-        self._freeze_plm_layers(num_unfreeze_layers)
+        self._freeze_plm_layers(last_n_unfreeze_layers)
 
         output_size = self._get_item_emb_dim()
 
@@ -188,7 +188,7 @@ class TextSeqRec(SeqRec, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _freeze_plm_layers(self, num_unfreeze_layers):
+    def _freeze_plm_layers(self, last_n_unfreeze_layers):
         raise NotImplementedError
 
     @abstractmethod

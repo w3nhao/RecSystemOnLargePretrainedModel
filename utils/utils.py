@@ -2,15 +2,68 @@ from datetime import datetime
 from pytorch_lightning.strategies import DDPFullyShardedNativeStrategy
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 from datamodules.utils import PRETRAIN_MODEL_ABBR
+from datamodules import SeqDataModule, PreInferSeqDataModule
+from models import (
+    IDSeqRec,
+    OPTSeqRec,
+    OPTPromptSeqRec,
+    BERTSeqRec,
+    BERTPromptSeqRec,
+    PreInferOPTSeqRec,
+)
+from utils.cli_parse import parse_boolean
+
+def get_model(args):
+    input_type = args.input_type
+    if input_type == 'id':
+        model = IDSeqRec
+    elif input_type == 'text':
+        plm_name = args.plm_name
+        use_prompt = args.use_prompt
+        pre_inference = args.pre_inference
+        if plm_name.startswith('facebook/opt'):
+            if pre_inference:
+                if use_prompt:
+                    raise NotImplementedError
+                else:
+                    model = PreInferOPTSeqRec
+            else:
+                if use_prompt:
+                    model = OPTPromptSeqRec
+                else:
+                    model = OPTSeqRec
+
+        elif plm_name.startswith('bert'):
+            if pre_inference:
+                if use_prompt:
+                    raise NotImplementedError
+                else:
+                    raise NotImplementedError
+            else:
+                if use_prompt:
+                    model = BERTPromptSeqRec
+                else:
+                    model = BERTSeqRec
+        else:
+            raise NotImplementedError
+    else:
+        raise NotImplementedError
+    return model
 
 
-def parse_boolean(value):
-    value = value.lower()
-    if value in ["true", "yes", "y", "1", "t"]:
-        return True
-    elif value in ["false", "no", "n", "0", "f"]:
-        return False
-    return False
+def get_datamodule(args):
+    # add new datamodule if needed
+    input_type = args.input_type
+    if input_type == 'id':
+        data_module = SeqDataModule
+    elif input_type == 'text':
+        if args.pre_inference:
+            data_module = PreInferSeqDataModule
+        else:
+            data_module = SeqDataModule
+    else:
+        raise NotImplementedError
+    return data_module
 
 
 def get_program_details(args):
@@ -63,19 +116,6 @@ def add_program_args(args, parent_parser):
                             help="whether to pre-inference")
 
     return parent_parser
-
-
-def add_pre_inference_args(args, parent_parser):
-    if args.input_type == "text" and args.pre_inference:
-        parser = parent_parser.add_argument_group("pre_inference")
-        parser.add_argument("--pre_inference_batch_size", type=int, default=1)
-        parser.add_argument("--pre_inference_devices",
-                            type=int,
-                            nargs="+",
-                            default=[0])
-        parser.add_argument("--pre_inference_precision", type=int, default=32)
-    return parent_parser
-
 
 def read_distributed_strategy(args):
     if args.strategy == "none":

@@ -56,13 +56,15 @@ class DataPreprocessor:
         item_seqs, targets = right_padding_left_trancate(
             inters, sasrec_seq_len)
 
-        item_seqs = np.array([" ".join(seq) for seq in item_seqs.astype(str)])
-        targets = np.array([" ".join(seq) for seq in targets.astype(str)])
+        item_seqs_str = np.array([" ".join(seq) for seq in item_seqs.astype(str)])
+        targets_str = np.array([" ".join(seq) for seq in targets.astype(str)])
 
         self.processed_df[self.inter_table] = pd.DataFrame({
-            "input_seqs": item_seqs,
-            "targets": targets
+            "input_seqs": item_seqs_str,
+            "targets": targets_str
         })
+        
+        return item_seqs, targets
 
     def prepare_items(self, plm_name, tokenized_len):
         """Prepare items data"""
@@ -78,15 +80,17 @@ class DataPreprocessor:
         tokenized_ids = tokenized_seqs[TEXT_ID_SEQ_FIELD].astype(np.str_)
         attention_mask = tokenized_seqs[ATTENTION_MASK_FIELD].astype(np.str_)
 
-        tokenized_ids = np.array([" ".join(seq) for seq in tokenized_ids])
-        attention_mask = np.array([" ".join(seq) for seq in attention_mask])
+        tokenized_ids_str = np.array([" ".join(seq) for seq in tokenized_ids])
+        attention_mask_str = np.array([" ".join(seq) for seq in attention_mask])
 
         self.processed_df[self.item_table] = pd.DataFrame({
             TEXT_ID_SEQ_FIELD:
-            tokenized_ids,
+            tokenized_ids_str,
             ATTENTION_MASK_FIELD:
-            attention_mask,
+            attention_mask_str,
         })
+        
+        return tokenized_ids, attention_mask
 
     def prepare_data(self):
         # self.drop_duplicates()

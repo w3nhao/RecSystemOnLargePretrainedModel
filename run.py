@@ -6,20 +6,12 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.profilers import PyTorchProfiler, AdvancedProfiler
 from transformers import logging
 
-from datamodules import SeqDataModule, PreInferSeqDataModule
-from models import (
-    IDSeqRec,
-    OPTSeqRec,
-    OPTPromptSeqRec,
-    BERTSeqRec,
-    BERTPromptSeqRec,
-    PreInferOPTSeqRec,
-)
 from utils import (
     add_program_args, 
     get_program_details, 
-    add_pre_inference_args, 
-    read_distributed_strategy
+    read_distributed_strategy,
+    get_model,
+    get_datamodule,
 )
 
 from utils.pylogger import get_pylogger
@@ -27,59 +19,6 @@ from utils.pylogger import get_pylogger
 torch.multiprocessing.set_sharing_strategy('file_system')
 logging.set_verbosity_error()
 log = get_pylogger(__name__)
-
-
-def get_model(args):
-    input_type = args.input_type
-    if input_type == 'id':
-        model = IDSeqRec
-    elif input_type == 'text':
-        plm_name = args.plm_name
-        use_prompt = args.use_prompt
-        pre_inference = args.pre_inference
-        if plm_name.startswith('facebook/opt'):
-            if pre_inference:
-                if use_prompt:
-                    raise NotImplementedError
-                else:
-                    model = PreInferOPTSeqRec
-            else:
-                if use_prompt:
-                    model = OPTPromptSeqRec
-                else:
-                    model = OPTSeqRec
-
-        elif plm_name.startswith('bert'):
-            if pre_inference:
-                if use_prompt:
-                    raise NotImplementedError
-                else:
-                    raise NotImplementedError
-            else:
-                if use_prompt:
-                    model = BERTPromptSeqRec
-                else:
-                    model = BERTSeqRec
-        else:
-            raise NotImplementedError
-    else:
-        raise NotImplementedError
-    return model
-
-
-def get_datamodule(args):
-    # add new datamodule if needed
-    input_type = args.input_type
-    if input_type == 'id':
-        data_module = SeqDataModule
-    elif input_type == 'text':
-        if args.pre_inference:
-            data_module = PreInferSeqDataModule
-        else:
-            data_module = SeqDataModule
-    else:
-        raise NotImplementedError
-    return data_module
 
 
 if __name__ == "__main__":
@@ -97,17 +36,13 @@ if __name__ == "__main__":
                            default="id",
                            help="input type of the model, "
                            "only support 'id' and 'test'")
-
-    temp_args, _ = argparser.parse_known_args()
+    
     # set program args
+    temp_args, _ = argparser.parse_known_args()
     argparser = add_program_args(temp_args, argparser)
 
-    temp_args, _ = argparser.parse_known_args()
-    # set pre-inference args if needed
-    argparser = add_pre_inference_args(temp_args, argparser)
-
-    temp_args, _ = argparser.parse_known_args()
     # set model and dataset args
+    temp_args, _ = argparser.parse_known_args()
     rec_model = get_model(args=temp_args)
     argparser = rec_model.add_model_specific_args(parent_parser=argparser)
     datamodule = get_datamodule(args=temp_args)

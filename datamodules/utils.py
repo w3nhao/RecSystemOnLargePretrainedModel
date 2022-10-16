@@ -1,4 +1,3 @@
-from genericpath import isfile
 import os
 import torch
 import subprocess
@@ -51,6 +50,12 @@ def right_padding_left_trancate(data, seq_len):
     return item_seqs, targets
 
 
+def leave_one_out_split(data):
+    """Leave one out split"""
+    """ split data into train , val and test """
+    pass
+
+
 def ratio_split(data, ratios):
     """Split data into train, valid and test set by ratio"""
     """ fixed ratio split (train:0.8, valid:0.1, test:0.1) """
@@ -81,7 +86,7 @@ def tokenize(text_seqs, tokenizer, tokenized_len):
     return tokenized_seqs
 
 
-def inferenced_embs_exists(processed_dir, plm_name, plm_n_unfreeze_layers):
+def inferenced_embs_exists(processed_dir, plm_name, plm_last_n_unfreeze):
     
     # get all files in the processed_dir
     files = []
@@ -94,7 +99,7 @@ def inferenced_embs_exists(processed_dir, plm_name, plm_n_unfreeze_layers):
     # OPT125M_freeze@10_inferenced_embs_for_unfreeze@2.pt
     embs_file = None
     for f in files:
-        if f.endswith(f"unfreeze@{plm_n_unfreeze_layers}.pt"):
+        if f.endswith(f"unfreeze@{plm_last_n_unfreeze}.pt"):
             if f.startswith(PRETRAIN_MODEL_ABBR[plm_name]):
                 embs_file = f
                 already_inferenced = True
@@ -106,7 +111,7 @@ def call_pre_inference(
     processed_dir,
     item_file,
     plm_name,
-    plm_n_unfreeze_layers,
+    plm_last_n_unfreeze,
     tokenized_len=30,
     batch_size=1,
     devices=[0, 1, 2, 3, 4, 5, 6, 7],
@@ -118,7 +123,7 @@ def call_pre_inference(
     cmd += ["--processed_dir", processed_dir]
     cmd += ["--processed_items_file", item_file]
     cmd += ["--plm_name", plm_name]
-    cmd += ["--plm_n_unfreeze_layers", str(plm_n_unfreeze_layers)]
+    cmd += ["--plm_last_n_unfreeze", str(plm_last_n_unfreeze)]
     cmd += ["--tokenized_len", str(tokenized_len)]
     cmd += ["--batch_size", str(batch_size)]
     cmd += ["--devices"] + [str(d) for d in devices]
