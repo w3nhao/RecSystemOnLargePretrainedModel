@@ -2,6 +2,9 @@ import logging
 
 from pytorch_lightning.utilities import rank_zero_only
 
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s %(filename)s %(levelname)s %(message)s',
+                    datefmt='%a %d %b %Y %H:%M:%S')
 
 def get_pylogger(name=__name__):
     """Initializes multi-GPU-friendly python command line logger."""
