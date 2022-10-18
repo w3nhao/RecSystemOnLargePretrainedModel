@@ -1,22 +1,16 @@
 import os
-import torch
 import pandas as pd
 import numpy as np
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
-from datamodules.utils import (inferenced_embs_exists, ratio_split, str_fields2ndarray,
-                               call_pre_inference, gather_inference_results,
-                               ITEM_ID_SEQ_FIELD, TARGET_FIELD,
-                               TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD,
-                               PRETRAIN_MODEL_ABBR)
+from datamodules.utils import (pre_inference, ratio_split, str_fields2ndarray,
+                               ITEM_ID_SEQ_FIELD, TARGET_FIELD, TEXT_ID_SEQ_FIELD,
+                               ATTENTION_MASK_FIELD, PRETRAIN_MODEL_ABBR)
 from datamodules.data_preprocessor import DataPreprocessor
 from datamodules.dataset import TextSeqRecDataset
-from datamodules.configs import (
-    PreInferSeqRecDMConfig,
-    get_data_configs, 
-    SeqRecDataModuleConfig
-)
-    
+from datamodules.configs import (PreInferSeqRecDMConfig, get_data_configs,
+                                 SeqRecDataModuleConfig)
+
 from utils.cli_parse import parse_boolean, int_or_none
 from utils.pylogger import get_pylogger
 
@@ -39,7 +33,7 @@ class SeqDataModule(LightningDataModule):
             self.tokenizer_abbr = PRETRAIN_MODEL_ABBR[dm_config.plm_name]
         except KeyError:
             raise ValueError(f"Unsupport plm name: {dm_config.plm_name}")
-        
+
         max_len = dm_config.max_item_seq_len if dm_config.max_item_seq_len else "INF"
         self.processed_dir = os.path.join(
             self.data_configs["data_dir"],
@@ -116,7 +110,7 @@ class SeqDataModule(LightningDataModule):
         if not self.data_train and not self.data_val and not self.data_test:
             tokenized_len = self.hparams.dm_config.tokenized_len
             sasrec_seq_len = self.hparams.dm_config.sasrec_seq_len
-            
+
             inter_table = self.data_configs["inter_table"]
             item_table = self.data_configs["item_table"]
             inters_path = os.path.join(self.processed_dir,
@@ -252,13 +246,13 @@ class SeqDataModule(LightningDataModule):
 
 
 class PreInferSeqDataModule(SeqDataModule):
+
     def __init__(self, dm_config: PreInferSeqRecDMConfig):
         super().__init__(dm_config)
-    
-    
+
     def prepare_data(self):
         num_items = super().prepare_data()
-        
+
         # load preprocessed tokenized_ids and attention_mask
         tokenized_len = self.hparams.dm_config.tokenized_len
         item_table = self.data_configs["item_table"]
@@ -271,121 +265,110 @@ class PreInferSeqDataModule(SeqDataModule):
             fields=[TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD],
             field_len=tokenized_len,
         )
-        
+
         # save tokenized_ids and attention_mask as npy
-        tokenized_ids = np.expand_dims(tokenized_ids, axis=0)
-        attention_mask = np.expand_dims(attention_mask, axis=0)
-        items = np.concatenate((tokenized_ids, attention_mask), axis=0)
         item_file = f"{item_table}_{self.tokenizer_abbr}.processed.npy"
-        np.save(os.path.join(self.processed_dir, item_file), items)
-        
-        n_unfreeze_layers = self.hparams.dm_config.plm_last_n_unfreeze
+        items_path = os.path.join(self.processed_dir, item_file)
+        if not os.path.isfile(items_path):
+            tokenized_ids = np.expand_dims(tokenized_ids, axis=0)
+            attention_mask = np.expand_dims(attention_mask, axis=0)
+            items = np.concatenate((tokenized_ids, attention_mask), axis=0)
+            np.save(items_path, items)
+            
         plm_name = self.hparams.dm_config.plm_name
+        last_n_unfreeze = self.hparams.dm_config.plm_last_n_unfreeze
         pre_inference_batch_size = self.hparams.dm_config.pre_inference_batch_size
-        devices = self.hparams.dm_config.pre_inference_devices
-        precision = self.hparams.dm_config.pre_inference_precision
-        num_workers = self.hparams.dm_config.pre_inference_num_workers
+        pre_inference_devices = self.hparams.dm_config.pre_inference_devices
+        pre_inference_precision = self.hparams.dm_config.pre_inference_precision
+        pre_inference_num_workers = self.hparams.dm_config.pre_inference_num_workers
+        pre_inference_layer_wise = self.hparams.dm_config.pre_inference_layer_wise
         
-        already_inferenced, _ = inferenced_embs_exists(
-            processed_dir=self.processed_dir,
+        pre_inference(
             plm_name=plm_name,
-            plm_last_n_unfreeze=n_unfreeze_layers
-            )
+            last_n_unfreeze=last_n_unfreeze,
+            processed_dir=self.processed_dir,
+            item_file=item_file,
+            tokenized_len=tokenized_len,
+            batch_size=pre_inference_batch_size,
+            devices=pre_inference_devices,
+            precision=pre_inference_precision,
+            num_workers=pre_inference_num_workers,
+            layer_wise=pre_inference_layer_wise,
+        )
         
-        if not already_inferenced:
-            return_code = call_pre_inference(
-                processed_dir=self.processed_dir,
-                item_file=item_file,
-                plm_name=plm_name,
-                plm_last_n_unfreeze=n_unfreeze_layers,
-                tokenized_len=tokenized_len,
-                batch_size=pre_inference_batch_size,
-                devices=devices,
-                precision=precision,
-                num_workers=num_workers,
-            )
-            if return_code == 0:
-                gather_inference_results(
-                    processed_dir=self.processed_dir,
-                    num_items=num_items,
-                )
-            else:
-                raise RuntimeError("Pre-inference failed.")
         return num_items
-    
-    def setup(self, stage=None):
-        # load and split datasets only if not loaded already
-        if not self.data_train and not self.data_val and not self.data_test:
-            tokenized_len = self.hparams.dm_config.tokenized_len
-            sasrec_seq_len = self.hparams.dm_config.sasrec_seq_len
-            n_unfreeze_layers = self.hparams.dm_config.plm_last_n_unfreeze
-            plm_name = self.hparams.dm_config.plm_name
-            
-            inter_table = self.data_configs["inter_table"]
-            item_table = self.data_configs["item_table"]
-            inters_path = os.path.join(self.processed_dir,
-                                       f"{inter_table}.processed.tsv")
-            items_path = os.path.join(
-                self.processed_dir,
-                f"{item_table}_{self.tokenizer_abbr}.processed.tsv")
-            inters = pd.read_csv(
-                inters_path,
-                sep="\t",
-                header=0,
-            )
-            items = pd.read_csv(
-                items_path,
-                sep="\t",
-                header=0,
-            )
 
-            self.num_items = len(items)
+    # def setup(self, stage=None):
+    #     # load and split datasets only if not loaded already
+    #     if not self.data_train and not self.data_val and not self.data_test:
+    #         tokenized_len = self.hparams.dm_config.tokenized_len
+    #         sasrec_seq_len = self.hparams.dm_config.sasrec_seq_len
+    #         last_n_unfreeze = self.hparams.dm_config.plm_last_n_unfreeze
+    #         plm_name = self.hparams.dm_config.plm_name
 
-            tokenized_ids, attention_mask = str_fields2ndarray(
-                df=items,
-                fields=[TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD],
-                field_len=tokenized_len,
-            )
-            
-            _, embs_file = inferenced_embs_exists(
-                processed_dir=self.processed_dir,
-                plm_name=plm_name,
-                plm_last_n_unfreeze=n_unfreeze_layers
-                )
-            pre_inference_embs = torch.load(
-                    os.path.join(self.processed_dir, embs_file)
-                )
-        
-            splitted_df = ratio_split(data=inters, ratios=[0.8, 0.1, 0.1])
-            stages = ["train", "val", "test"]
-            item_id_seqs, targets = {}, {}
-            for df, stage in zip(splitted_df, stages):
-                item_id_seqs[stage], targets[stage] = str_fields2ndarray(
-                    df=df,
-                    fields=[ITEM_ID_SEQ_FIELD, TARGET_FIELD],
-                    field_len=sasrec_seq_len,
-                )
+    #         inter_table = self.data_configs["inter_table"]
+    #         item_table = self.data_configs["item_table"]
+    #         inters_path = os.path.join(self.processed_dir,
+    #                                    f"{inter_table}.processed.tsv")
+    #         items_path = os.path.join(
+    #             self.processed_dir,
+    #             f"{item_table}_{self.tokenizer_abbr}.processed.tsv")
+    #         inters = pd.read_csv(
+    #             inters_path,
+    #             sep="\t",
+    #             header=0,
+    #         )
+    #         items = pd.read_csv(
+    #             items_path,
+    #             sep="\t",
+    #             header=0,
+    #         )
 
-            self.data_train = TextSeqRecDataset(
-                item_id_seqs=item_id_seqs["train"],
-                targets=targets["train"],
-                tokenized_ids=tokenized_ids,
-                attention_mask=attention_mask,
-            )
-            self.data_val = TextSeqRecDataset(
-                item_id_seqs=item_id_seqs["val"],
-                targets=targets["val"],
-                tokenized_ids=tokenized_ids,
-                attention_mask=attention_mask,
-            )
+    #         self.num_items = len(items)
 
-            self.data_test = TextSeqRecDataset(
-                item_id_seqs=item_id_seqs["test"],
-                targets=targets["test"],
-                tokenized_ids=tokenized_ids,
-                attention_mask=attention_mask,
-            )
-    
+    #         tokenized_ids, attention_mask = str_fields2ndarray(
+    #             df=items,
+    #             fields=[TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD],
+    #             field_len=tokenized_len,
+    #         )
+
+    #         _, embs_file = inferenced_embs_exists(
+    #             processed_dir=self.processed_dir,
+    #             plm_name=plm_name,
+    #             plm_last_n_unfreeze=last_n_unfreeze)
+    #         pre_inference_embs = torch.load(
+    #             os.path.join(self.processed_dir, embs_file))
+
+    #         splitted_df = ratio_split(data=inters, ratios=[0.8, 0.1, 0.1])
+    #         stages = ["train", "val", "test"]
+    #         item_id_seqs, targets = {}, {}
+    #         for df, stage in zip(splitted_df, stages):
+    #             item_id_seqs[stage], targets[stage] = str_fields2ndarray(
+    #                 df=df,
+    #                 fields=[ITEM_ID_SEQ_FIELD, TARGET_FIELD],
+    #                 field_len=sasrec_seq_len,
+    #             )
+
+    #         self.data_train = TextSeqRecDataset(
+    #             item_id_seqs=item_id_seqs["train"],
+    #             targets=targets["train"],
+    #             tokenized_ids=tokenized_ids,
+    #             attention_mask=attention_mask,
+    #         )
+    #         self.data_val = TextSeqRecDataset(
+    #             item_id_seqs=item_id_seqs["val"],
+    #             targets=targets["val"],
+    #             tokenized_ids=tokenized_ids,
+    #             attention_mask=attention_mask,
+    #         )
+
+    #         self.data_test = TextSeqRecDataset(
+    #             item_id_seqs=item_id_seqs["test"],
+    #             targets=targets["test"],
+    #             tokenized_ids=tokenized_ids,
+    #             attention_mask=attention_mask,
+    #         )
+
     @classmethod
     def add_datamodule_specific_args(cls, parent_parser):
         """Add datamodule specific arguments to the parser."""
@@ -401,16 +384,15 @@ class PreInferSeqDataModule(SeqDataModule):
         parser.add_argument("--max_item_seq_len",
                             type=int_or_none,
                             default=None)
+        parser.add_argument("--keep_n_freeze_files", type=int, nargs="+", default=None)
         parser.add_argument("--pre_inference_devices",
                             type=int,
                             nargs="+",
-                            default=[0, 1, 2, 3, 4, 5 , 6, 7])
-        parser.add_argument("--pre_inference_precision",
-                            type=int, default=32)
-        parser.add_argument("--pre_inference_batch_size",
-                            type=int, default=1)
-        parser.add_argument("--pre_inference_num_workers",
-                            type=int, default=4)
+                            default=[0, 1, 2, 3, 4, 5, 6, 7])
+        parser.add_argument("--pre_inference_precision", type=int, default=32)
+        parser.add_argument("--pre_inference_batch_size", type=int, default=1)
+        parser.add_argument("--pre_inference_num_workers", type=int, default=4)
+        parser.add_argument("--pre_inference_layer_wise", type=parse_boolean, default=False)
         return parent_parser
 
     @classmethod
@@ -418,12 +400,14 @@ class PreInferSeqDataModule(SeqDataModule):
         """Build configs from arguments."""
         config = PreInferSeqRecDMConfig(
             dataset=args.dataset,
-            plm_name = args.plm_name,
+            plm_name=args.plm_name,
             plm_last_n_unfreeze=args.plm_last_n_unfreeze,
+            keep_n_freeze_files=args.keep_n_freeze_files,
             pre_inference_batch_size=args.pre_inference_batch_size,
             pre_inference_precision=args.pre_inference_precision,
             pre_inference_devices=args.pre_inference_devices,
             pre_inference_num_workers=args.pre_inference_num_workers,
+            pre_inference_layer_wise=args.pre_inference_layer_wise,
             min_item_seq_len=args.min_item_seq_len,
             max_item_seq_len=args.max_item_seq_len,
             sasrec_seq_len=args.sasrec_seq_len,
@@ -433,5 +417,3 @@ class PreInferSeqDataModule(SeqDataModule):
             pin_memory=args.pin_memory,
         )
         return config
-
-

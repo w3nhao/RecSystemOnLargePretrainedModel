@@ -1,7 +1,12 @@
 import os
 import torch
 import subprocess
+import time
 import numpy as np
+from transformers import AutoConfig
+from utils.pylogger import get_pylogger
+from tqdm import tqdm
+
 
 ITEM_ID_SEQ_FIELD = "input_seqs"
 TARGET_FIELD = "targets"
@@ -20,6 +25,8 @@ PRETRAIN_MODEL_ABBR = {
     "bert-base-uncased": "BERTBASE",
     "bert-large-uncased": "BERTLARGE",
 }
+
+log = get_pylogger(__name__)
 
 
 def str_fields2ndarray(df, fields, field_len, dtype=np.int64):
@@ -86,44 +93,32 @@ def tokenize(text_seqs, tokenizer, tokenized_len):
     return tokenized_seqs
 
 
-def inferenced_embs_exists(processed_dir, plm_name, plm_last_n_unfreeze):
-    
-    # get all files in the processed_dir
-    files = []
-    for f in os.listdir(processed_dir):
-        if os.path.isfile(os.path.join(processed_dir, f)):
-            files.append(f)
-
-    already_inferenced = False
-    # inferenced result name format:
-    # OPT125M_freeze@10_inferenced_embs_for_unfreeze@2.pt
-    embs_file = None
-    for f in files:
-        if f.endswith(f"unfreeze@{plm_last_n_unfreeze}.pt"):
-            if f.startswith(PRETRAIN_MODEL_ABBR[plm_name]):
-                embs_file = f
-                already_inferenced = True
-                return already_inferenced, embs_file
-    return already_inferenced, embs_file
-
-
-def call_pre_inference(
+def call_inference(
     processed_dir,
     item_file,
     plm_name,
-    plm_last_n_unfreeze,
+    input_layer="none",
+    target_layer="emb",
+    input_item_embs_file=None,
     tokenized_len=30,
     batch_size=1,
     devices=[0, 1, 2, 3, 4, 5, 6, 7],
     precision=32,
     num_workers=4,
-    inference_script_path="scripts/preinference.py",
+    inference_script_path="scripts/inference.py",
 ):
+    """Call inference script to infer item embs"""
+
+    if input_item_embs_file is None:
+        input_item_embs_file = "none"
+
     cmd = ["python", inference_script_path]
+    cmd += ["--plm_name", plm_name]
     cmd += ["--processed_dir", processed_dir]
     cmd += ["--processed_items_file", item_file]
-    cmd += ["--plm_name", plm_name]
-    cmd += ["--plm_last_n_unfreeze", str(plm_last_n_unfreeze)]
+    cmd += ["--input_item_embs_file", input_item_embs_file]
+    cmd += ["--input_layer", str(input_layer)]
+    cmd += ["--target_layer", str(target_layer)]
     cmd += ["--tokenized_len", str(tokenized_len)]
     cmd += ["--batch_size", str(batch_size)]
     cmd += ["--devices"] + [str(d) for d in devices]
@@ -133,84 +128,277 @@ def call_pre_inference(
     return code
 
 
-def gather_inference_results(processed_dir, num_items):
-    """collect inference results from all devices"""
+def pre_inference(
+    plm_name,
+    last_n_unfreeze,
+    processed_dir,
+    item_file,
+    tokenized_len=30,
+    batch_size=1,
+    devices=[0, 1, 2, 3, 4, 5, 6, 7],
+    precision=32,
+    num_workers=4,
+    inference_script_path="scripts/inference.py",
+    layer_wise=True,
+):
+    """Pre-inference for the last n layers of the plm"""
+
+    plm_config = AutoConfig.from_pretrained(plm_name)
+    file_processor = InferenceFileProcessor(
+            processed_dir=processed_dir,
+            plm_name=plm_name,
+            last_n_unfreeze=last_n_unfreeze,
+            n_inferenc_devices=len(devices),
+        )
+
+    if file_processor.exists_inference_file():
+        embs_file = file_processor.get_inference_file()
+        log.info(
+            f"already inferenced {plm_name} for unfreeze last {last_n_unfreeze} layers"
+        )
+        return torch.load(os.path.join(processed_dir, embs_file))
+
+    log.info(
+        f"start inferencing {plm_name} for unfreeze last {last_n_unfreeze} layers..."
+    )
     
-    # get all files in the processed_dir
-    files = []
-    for f in os.listdir(processed_dir):
-        if os.path.isfile(os.path.join(processed_dir, f)):
-            files.append(f)
+    final_n_freeze = plm_config.num_hidden_layers - last_n_unfreeze
+    
+    levels = ["none", "emb"] + [i for i in range(final_n_freeze)]
+    prev_embs_file = file_processor.find_nearest_inference_file()
+    if prev_embs_file is not None:
+        prev_n_unfreeze, prev_embs_file = prev_embs_file
+        input_layer = levels[prev_n_unfreeze + 1]
+    else:
+        input_layer = "none"
+        prev_embs_file = "none"
+        
+    # layer-wise inference
+    if layer_wise:
+        # take OPT125M as an example: 
+        # levels = ["none", "emb", 0, 1, 2, 3, 4 ... 11]
+        # if previous target layer as input layer is 2, which means we have inferenced 
+        # to the 2nd decoder layer, so now we have a file prefix as "OPT125M_freeze@2", 
+        # n_freeze will be 3 after this call, and the current target layer will be 
+        # levels[3 + 1] = 2 (levels[n_freeze + 1] = 2), which is the 3rd decoder layer
+        start = levels.index(input_layer)
+        end = levels.index(final_n_freeze - 1) if final_n_freeze != 0 else len(levels) - 1
+        for n_freeze in range(start, end):
+            prev_layer = levels[n_freeze]
+            curr_layer = levels[n_freeze + 1]
+            return_code = call_inference(
+                processed_dir=processed_dir,
+                item_file=item_file,
+                plm_name=plm_name,
+                input_layer=prev_layer,
+                target_layer=curr_layer,
+                input_item_embs_file=prev_embs_file,
+                tokenized_len=tokenized_len,
+                batch_size=batch_size,
+                devices=devices,
+                precision=precision,
+                num_workers=num_workers,
+                inference_script_path=inference_script_path,
+            )
+            if return_code == 0:
+                new_embs_file = file_processor.gather_inference_results(
+                    n_freeze=n_freeze)
+                # only keep inferenced files for the last 2, 1, 0 unfreeze models
+                if plm_config.num_hidden_layers - n_freeze >= 2 and prev_embs_file != "none":
+                    os.remove(os.path.join(processed_dir, prev_embs_file))
+                prev_embs_file = new_embs_file
+            else:
+                raise RuntimeError("Pre-inference failed.")
+    # full inference
+    else:
+        target_layer = levels[-1]
+        return_code = call_inference(
+            processed_dir=processed_dir,
+            item_file=item_file,
+            plm_name=plm_name,
+            input_layer=input_layer,
+            target_layer=target_layer,
+            input_item_embs_file=prev_embs_file,
+            tokenized_len=tokenized_len,
+            batch_size=batch_size,
+            devices=devices,
+            precision=precision,
+            num_workers=num_workers,
+            inference_script_path=inference_script_path,
+        )
+        if return_code == 0:
+            new_embs_file = file_processor.gather_inference_results(
+                n_freeze=final_n_freeze)
+        else:
+            raise RuntimeError("Pre-inference failed.")
+        
+        log.info(
+            f"finish inferencing {plm_name} for unfreeze last {last_n_unfreeze} layers"
+        )
+    raise
 
-    # inferenced result name format:
-    # OPT125M_freeze@10_inferenced_idxs_for_unfreeze@2_0.pt
-    # OPT125M_freeze@10_inferenced_embs_for_unfreeze@2_0.pt
-    # the last number before .pt is the device id
-    plms = []
-    for f in files:
-        if "inferenced_idxs" in f:
-            plm_name = f.split("_")[0]
-            n_freeze_layers = f.split("_")[1]
-            n_unfreeze_layers = f.split("_")[5]
-            plms.append(f"{plm_name}_{n_freeze_layers}+{n_unfreeze_layers}")
-    plms = list(set(plms))
+class InferenceFileProcessor:
 
-    max_ranks = []
-    for plm in plms:
-        ranks = []
+    def __init__(self,
+                 processed_dir,
+                 plm_name,
+                 last_n_unfreeze,
+                 n_inferenc_devices=None):
+        self.plm_name = plm_name
+        self.plm_abbr = PRETRAIN_MODEL_ABBR[plm_name]
+        self.plm_config = AutoConfig.from_pretrained(plm_name)
+        assert self.plm_config.num_hidden_layers >= last_n_unfreeze
+        assert last_n_unfreeze > -1
+        if last_n_unfreeze == self.plm_config.num_hidden_layers:
+            log.info("last_n_unfreeze is equal to the number of layers, only freeze the embedding layer")
+        self.last_n_unfreeze = last_n_unfreeze
+        self.n_freeze = self.plm_config.num_hidden_layers - last_n_unfreeze
+        self.processed_dir = processed_dir
+        self.n_inferenc_devices = n_inferenc_devices
+
+    def get_inference_file(self, is_embs=True, rank_idx=None):
+        """
+        Get the inference file name
+        
+        Distributed inference will generate multiple files, so we need to specify the rank_idx
+        
+        Format: 
+            {plm_abbr}_freeze@{n_freeze}_inferenced_{embs/idxs}_rank@{rank_idx}.pt
+        Example: 
+            OPT125M_freeze@10_inferenced_embs_for_unfreeze@2_rank\@0.pt
+            
+        If rank_idx is None, then it will return the file name for the final inference result
+        
+        Format: 
+            {plm_abbr}_freeze@{n_freeze}_inferenced_embs.pt
+        Example: 
+            OPT125M_freeze@10_inferenced_embs.pt
+        """
+        file_type = "embs" if is_embs else "idxs"
+        _file_name = f"{self.plm_abbr}_" + \
+                    f"freeze@{self.n_freeze}_" + \
+                    f"inferenced_{file_type}"
+        if rank_idx is not None:
+            file_name = _file_name + f"_rank@{rank_idx}.pt"
+        else:
+            file_name = _file_name + ".pt"
+        return file_name
+
+    def get_files_in_processed_dir(self):
+        """ Get all files in the processed_dir """
+        files = []
+        for f in os.listdir(self.processed_dir):
+            if os.path.isfile(os.path.join(self.processed_dir, f)):
+                files.append(f)
+        return files
+
+    def exists_inference_file(self):
+        """ Check if the inference file exists """
+        # get all files in the processed_dir
+        files = self.get_files_in_processed_dir()
+
+        already_inferenced = False
+        # inferenced result name format:
+        # OPT125M_freeze@10_inferenced_embs.pt
         for f in files:
-            if plm.split("+")[0] + "_inferenced_idxs" in f:
-                ranks.append(f.split("_")[-1].split(".")[0])
-        max_ranks.append(max(int(rank) for rank in ranks))
+            if f == self.get_inference_file():
+                already_inferenced = True
+                break
+        return already_inferenced
 
-    sorted_embs = None
-    for plm, max_rank in zip(plms, max_ranks):
-        inferenced_embs = []
-        inferenced_idxs = []
-        for i in range(max_rank + 1):
-            name_n_freeze = plm.split("+")[0] # OPT125M_freeze@10
-            n_unfreeze = plm.split("+")[1] # unfreeze@2
-            idxs = torch.load(
-                os.path.join(
-                    processed_dir, 
-                    f"{name_n_freeze}_inferenced_idxs_"
-                    f"for_{n_unfreeze}_{i}.pt"
-                    )
-                )
-            embs = torch.load(
-                os.path.join(
-                    processed_dir, 
-                    f"{name_n_freeze}_inferenced_embs_"
-                    f"for_{n_unfreeze}_{i}.pt"
-                    )
-                )
-            inferenced_idxs.append(idxs)
-            inferenced_embs.append(embs)
+    def find_nearest_inference_file(self):
+        """ Get the nearest inference file """
+        if self.exists_inference_file():
+            return self.get_inference_file()
+
+        files = self.get_files_in_processed_dir()
+
+        emb_files, n_freeze_list = [], []
+        file_prefix = f"{self.plm_abbr}_freeze@"
+        for f in files:
+            if f.startswith(file_prefix) and f.endswith("_inferenced_embs.pt"):
+                n_freeze = int(f.split("@")[1].split("_")[0])
+                n_freeze_list.append(n_freeze)
+                emb_files.append(f)
+
+        if len(emb_files) == 0:
+            log.info(f"no inference file found in {self.processed_dir}")
+            return None
+
+        difference = [self.n_freeze - n for n in n_freeze_list]
+        lower_layer_diff = [diff for diff in difference if diff > 0]
+        min_diff = min(lower_layer_diff) if len(lower_layer_diff) > 0 else None
+        if min_diff is None:
+            log.info(f"no lower layer inference file found in {self.processed_dir}")
+            return None
+        else:
+            nearest_n_freeze = self.n_freeze - min_diff
+            nearest_n_freeze_idx = difference.index(min_diff)
+            nearest_file = emb_files[nearest_n_freeze_idx]
+            return nearest_n_freeze, nearest_file
+
+    def gather_inference_results(self, n_freeze):
+        """collect inference results from all devices"""
+
+        files = self.get_files_in_processed_dir()
+
+        # inferenced result name format:
+        # OPT125M_freeze@10_inferenced_idxs_rank@0.pt
+        # OPT125M_freeze@10_inferenced_embs_rank@0.pt
+        # the last number before .pt is the device id
+        file_prefix = f"{self.plm_abbr}_freeze@{n_freeze}_inferenced"
+        
+        if self.n_inferenc_devices is None:
+            # search max device id
+            ranks = []
+            for f in files:
+                if f"{file_prefix}_idxs" in f:
+                    ranks.append(f.split("_")[-1].split(".")[0].split("@")[1])
+            if ranks == []:
+                raise RuntimeError(f"No inference result like {file_prefix} found.")
+            max_rank = max(int(rank) for rank in ranks)
+        else:
+            max_rank = self.n_inferenc_devices - 1
+
+        retry_times = 10
+        for i in range(retry_times):  
+            inferenced_embs, inferenced_idxs = [], []
+            try:      
+                for i in range(max_rank + 1):
+                    idxs_file = f"{file_prefix}_idxs_rank@{i}.pt"
+                    embs_file = f"{file_prefix}_embs_rank@{i}.pt"
+                    idxs = torch.load(os.path.join(self.processed_dir, idxs_file))
+                    embs = torch.load(os.path.join(self.processed_dir, embs_file))
+                    inferenced_idxs.append(idxs)
+                    inferenced_embs.append(embs)
+            except Exception as e:
+                n_times = i + 1
+                log.error(f"The {n_times} time fail to gather inference results, "
+                          f"remaining {retry_times - n_times} to try, error: \n {e}")
+                
+                for _ in tqdm(range(60), desc=f"waiting for inference results"):
+                    time.sleep(1)
+                continue
+            
+        if inferenced_embs == []:
+            raise RuntimeError(
+                f"Failed to gather inference results after {retry_times} times retry.")
 
         # concat all inferenced results and sort by idxs
         inferenced_idxs = torch.cat(inferenced_idxs, dim=0)
         sorted_idxs = torch.argsort(inferenced_idxs)
 
-        if len(sorted_idxs) != num_items:
-            raise ValueError(
-                f"num_items: {num_items}, sorted_idxs: {len(sorted_idxs)}"
-                "the number of inferenced items is not equal to the number of items"
-                "probably some items are oversampled when using the ddp sampler"
-                "please use single accelerator to infer the embeddings")
-
         inferenced_embs = torch.cat(inferenced_embs, dim=0)
         sorted_embs = inferenced_embs[sorted_idxs]
 
-        # remove the files
+        # remove the tmp result files
         for f in files:
-            if f"{name_n_freeze}_inferenced_" in f:
-                os.remove(os.path.join(processed_dir, f))
+            if file_prefix in f and "rank" in f:
+                os.remove(os.path.join(self.processed_dir, f))
 
-        torch.save(sorted_embs,
-                   os.path.join(
-                        processed_dir, 
-                        f"{name_n_freeze}_inferenced_embs_"
-                        f"for_{n_unfreeze}.pt"))
+        result_file = f"{file_prefix}_embs.pt"
+        torch.save(sorted_embs, os.path.join(self.processed_dir, result_file))
 
-    # only return one plm inferenced embs if needed
-    return sorted_embs
+        # return the final result file name
+        return result_file
+

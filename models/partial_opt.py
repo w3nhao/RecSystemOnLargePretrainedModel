@@ -37,6 +37,8 @@ def check_keep_decoders_range(
     keep_decoders_range: Optional[Tuple[int]]):
     # the keep_decoders_range tuple is a left-closed and right-closed interval [a, b] as input 
     if keep_decoders_range is None:
+        if not keep_embed_layer:
+            raise ValueError("keep_decoders_range must be specified if keep_embed_layer is False")
         return None
     else:
         assert len(keep_decoders_range) == 2
@@ -49,7 +51,7 @@ def check_keep_decoders_range(
         raise ValueError(
             "You can't keep keep the embedding layer since you drop the first decoder layer"
         )
-        
+    
     if range_start < 0:
         range_start = config.num_hidden_layers + range_start
     
@@ -157,11 +159,12 @@ class PartialOPTDecoder(OPTPreTrainedModel):
 
     def forward(
         self,
-        input_ids: torch.LongTensor,
+        input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
+        inputs_hidden_state: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -169,7 +172,7 @@ class PartialOPTDecoder(OPTPreTrainedModel):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         r"""
         Args:
-            input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
+            input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
                 Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you
                 provide it.
 
@@ -205,6 +208,9 @@ class PartialOPTDecoder(OPTPreTrainedModel):
                 Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation.
                 This is useful if you want more control over how to convert `input_ids` indices into associated vectors
                 than the model's internal embedding lookup matrix.
+            inputs_hidden_state (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
+                Optionally, instead of passing `input_ids` you can choose to directly pass an hidden states.
+                This is useful if you want to use the hidden states of another model.
             output_attentions (`bool`, *optional*):
                 Whether or not to return the attentions tensors of all attention layers. See `attentions` under
                 returned tensors for more detail.
@@ -223,40 +229,55 @@ class PartialOPTDecoder(OPTPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if self.keep_embed_layer:
-            assert input_ids is not None, "You have to specify input_ids."
+            # retrieve input_ids and inputs_embeds
+            if input_ids is not None and inputs_embeds is not None:
+                raise ValueError("You cannot specify both decoder_input_ids and decoder_inputs_embeds at the same time")
+            elif input_ids is not None:
+                input_shape = input_ids.size()
+                input_ids = input_ids.view(-1, input_shape[-1])
+            elif inputs_embeds is not None:
+                input_shape = inputs_embeds.size()[:-1]
+            else:
+                raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds when keep_embed_layer=True")
+            
+            if inputs_embeds is None:
+                inputs_embeds = self.embed_tokens(input_ids)
+            
+            past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
+            
+             # embed positions
+            if attention_mask is None:
+                attention_mask = torch.ones(inputs_embeds.shape[:2], dtype=torch.bool, device=inputs_embeds.device)
+            
+            pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
+            
+
+            attention_mask = self._prepare_decoder_attention_mask(
+                attention_mask, input_shape, inputs_embeds, past_key_values_length
+            )
+            
+            if self.project_in is not None:
+                inputs_embeds = self.project_in(inputs_embeds)
+            hidden_states = inputs_embeds + pos_embeds
+
+            if self.keep_decoders_range is None:
+                return BaseModelOutputWithPast(last_hidden_state=hidden_states)
         else:
-            assert inputs_embeds is not None, "You have to specify inputs_embeds"
+            if inputs_hidden_state is not None:
+               input_shape = inputs_hidden_state.size()[:-1]
+            else:
+                raise ValueError("You have to specify inputs_hidden_state") 
+            if attention_mask is None:
+                raise ValueError("You have to specify attention_mask when inputs_hidden_state is not None")
 
-        # retrieve input_ids and inputs_embeds
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both decoder_input_ids and decoder_inputs_embeds at the same time")
-        elif input_ids is not None:
-            input_shape = input_ids.size()
-            input_ids = input_ids.view(-1, input_shape[-1])
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        else:
-            raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
+            past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
 
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
-
-        if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
-
-        # embed positions
-        if attention_mask is None:
-            attention_mask = torch.ones(inputs_embeds.shape[:2], dtype=torch.bool, device=inputs_embeds.device)
-        pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
-
-        attention_mask = self._prepare_decoder_attention_mask(
-            attention_mask, input_shape, inputs_embeds, past_key_values_length
-        )
-
-        if self.project_in is not None:
-            inputs_embeds = self.project_in(inputs_embeds)
-
-        hidden_states = inputs_embeds + pos_embeds
-
+            attention_mask = self._prepare_decoder_attention_mask(
+                attention_mask, input_shape, inputs_hidden_state, past_key_values_length
+            )
+            
+            hidden_states = inputs_hidden_state
+        
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -322,9 +343,10 @@ class PartialOPTDecoder(OPTPreTrainedModel):
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
-
-        if self.final_layer_norm is not None:
-            hidden_states = self.final_layer_norm(hidden_states)
+                
+        if self.keep_decoders_range[1] == self.config.num_hidden_layers:
+            if self.final_layer_norm is not None:
+                hidden_states = self.final_layer_norm(hidden_states)
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -384,11 +406,12 @@ class PartialOPTModel(OPTModel):
     )
     def forward(
         self,
-        input_ids: torch.LongTensor,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
+        input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        inputs_hidden_state: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -405,10 +428,11 @@ class PartialOPTModel(OPTModel):
         # decoder outputs consists of (dec_features, past_key_value, dec_hidden, dec_attn)
         decoder_outputs = self.decoder(
             input_ids=input_ids,
-            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             head_mask=head_mask,
             past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            inputs_hidden_state=inputs_hidden_state,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
@@ -427,11 +451,14 @@ class PartialOPTModel(OPTModel):
         
         
 if __name__ == "__main__":
-    
+    from transformers import AutoTokenizer, AutoModel, logging
+    logging.set_verbosity_error()
+    import torch
+    import os
+
     # test loading single decoder layer
     a, b = None, None
     
-    from transformers import OPTModel
     opt = PartialOPTModel.from_pretrained(
         pretrained_model_name_or_path="facebook/opt-125m",
         keep_embed_layer=False,
@@ -440,9 +467,48 @@ if __name__ == "__main__":
         if name=="decoder.layers.2.fc1.weight":
             a = param
             
-    opt = OPTModel.from_pretrained("facebook/opt-125m")
+    opt = AutoModel.from_pretrained("facebook/opt-125m")
     for name, param in opt.named_parameters():
         if name=="decoder.layers.2.fc1.weight":
             b = param
             
     assert int((a != b).sum()) == 0
+    
+    # test layer-wise loading and inferencing
+    tokenizer = AutoTokenizer.from_pretrained('facebook/opt-125m')
+    og_model = AutoModel.from_pretrained('facebook/opt-125m')
+    for params in og_model.parameters():
+        params.requires_grad = False
+
+    data = tokenizer('hello world')
+    input_ids = torch.tensor(data['input_ids']).unsqueeze(0)
+    attn_mask = torch.tensor(data['attention_mask']).unsqueeze(0)
+
+    og_model.eval()
+    with torch.no_grad():
+        og_output = og_model(input_ids=input_ids, attention_mask=attn_mask)
+
+    partial_models = [PartialOPTModel.from_pretrained('facebook/opt-125m', keep_embed_layer=True, keep_decoders_range=None)]
+
+    for i in range(0, 12):
+        partial_models.append(PartialOPTModel.from_pretrained('facebook/opt-125m', keep_embed_layer=False, keep_decoders_range=(i, i)))
+
+    for model in partial_models:
+        for params in model.parameters():
+            params.requires_grad = False
+
+    last_hidden_state = None
+    for i in range(len(partial_models)):
+        model = partial_models[i]
+        model.eval()
+        with torch.no_grad():
+            if i == 0:
+                output = model(input_ids=input_ids, attention_mask=attn_mask)
+                torch.save(output.last_hidden_state, 'temp.pt')
+                last_hidden_state = torch.load('temp.pt')
+            else:
+                output = model(inputs_hidden_state=last_hidden_state, attention_mask=attn_mask)
+                torch.save(output.last_hidden_state, 'temp.pt')
+                last_hidden_state = torch.load('temp.pt')
+        os.remove('temp.pt')
+    assert int((output.last_hidden_state != og_output.last_hidden_state).sum()) == 0

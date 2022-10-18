@@ -61,8 +61,7 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 ### TODO
 1. Add a new class to store the pre-inferenced embs as a numpy array.
 2. BCE loss should access all the items, check [Accessing DataLoaders within LightningModule](https://pytorch-lightning.readthedocs.io/en/latest/guides/data.html#accessing-dataloaders-within-lightningmodule).
-3. When pre-inferencing, every time the script would load the tsv file of preprocessed item input_ids and attention_mask. For speeding up the pre-inference process, consider using feather/Jay format to store the item preprocessed data.
-
+3. add new argument `input_hidden_statets` to class `PartialOPT` to control whether to use the hidden states of the input sequence.
 
 ### notes
 ##### 1. Args of `run.py`
@@ -97,7 +96,7 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 ###### plm specific args
 -   `--tokenized_len` is the length of tokenized sequence for PLM
 -   `--plm_name` can be `facebook/opt-125m` to `facebook/opt-66b` or `bert-base-uncased` to `bert-large-uncased`
--   `--plm_last_n_unfreeze` can be the number of layers to be unfrozen, default is 0, which means all layers are frozen. However, if you want to use all layers of the pretrained model, you should set it to -1, rather than pretrain model's `num_hidden_layers`, which would caused an ValueError in this programe.
+-   `--plm_last_n_unfreeze` is the number of layers to be unfrozen, default is 0, which means all layers are frozen. However, if you want to use all layers of the pretrained model, you should set it to -1, rather than pretrain model's `num_hidden_layers`, which only means fine-tune all decoders or encoders, but still freeze the embedding. In the pre-inference stage, the unfrozen layers are not used.
 -   `--plm_lr` is the learning rate for PLM when fine-tuning
 -   `--plm_lr_layer_decay` is the learning rate decay for each layer of PLM when fine-tuning
 -   `--projection_n_layers` is the number of projection layers which connect PLM and SASRec
@@ -118,6 +117,7 @@ Take MIND_small as an example, the number of items is 52771, if we padding or tr
 -   `--pre_inference_devices` is the devices of inference
 -   `--pre_inference_precision` is the precision of inference
 -   `--pre_inference_num_workers` is the number of workers for data loading of inference
+-   `--pre_inference_layer_wise` can be `True` or `False`, if it is `True`, then do inference layer by layer, otherwise do inference for the whole model
 
 ##### 2. manually inferencing before traininig
 Use command like following:
@@ -133,7 +133,8 @@ python datamodules/preinference.py \
     --pre_inference_precision 32 \
     --pre_inference_batch_size 1 \
     --pre_inference_num_workers 4 \
-    --last_n_unfreeze 0
+    --pre_inference_layer_wise True \
+    --keep_n_freeze_files [10, 11, 12]
 ```
 
 Args of `preinference.py`:
@@ -147,4 +148,8 @@ Args of `preinference.py`:
 -   `--pre_inference_precision` is the precision of inference
 -   `--pre_inference_batch_size` is the batch size of inference
 -   `--pre_inference_num_workers` is the number of workers for data loading of inference
--   `--plm_last_n_unfreeze` is the number of layers to be unfrozen, default is 0, which means all layers are frozen. However, if you want to use all layers of the pretrained model, you should set it to -1, rather than pretrain model's `num_hidden_layers`, which would caused an ValueError in this programe. In the pre-inference stage, the unfrozen layers are not used.
+-   `--pre_inference_layer_wise` can be `True` or `False`, if it is `True`, then do inference layer by layer, otherwise do inference for the whole model
+-   `--plm_last_n_unfreeze` is the number of layers to be unfrozen, default is 0, which means all layers are frozen. However, if you want to use all layers of the pretrained model, you should set it to -1, rather than pretrain model's `num_hidden_layers`, which only means fine-tune all decoders or encoders, but still freeze the embedding. In the pre-inference stage, the unfrozen layers are not used.
+
+
+<!-- -   `--keep_n_freeze_files` is the `n_freeze` model inference result files to keep, default is None, which means keep `n_freeze` one (`n_freeze = num_hidden_layer - last_n_unfreeze`) and the frozen infercenced files for the last 2 unfreeze layers, e.g. using a `facebook/opt-125m` model and setting `plm_last_n_unfreeze=4`, it defaults to save files named with `freeze@8` but also a list of files named `freeze@10`, `freeze@11`, `freeze@12` if they exist in output dir. It can specify a list of integers, such as `"1 2 3`, which means keep the result files inferenced by model named with `freeze@1`, `freeze@2` and `freeze@3`. -->

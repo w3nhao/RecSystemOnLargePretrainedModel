@@ -6,7 +6,6 @@ sys.path.append(os.path.dirname(current_dir))
 # delete the current directory from the path
 sys.path.remove(current_dir)
 
-
 import argparse
 import torch
 import argparse
@@ -17,12 +16,14 @@ from torch.utils.data import DataLoader, Dataset
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import BasePredictionWriter
 from utils.cli_parse import str_or_none, parse_plm_layer
-from datamodules.utils import PRETRAIN_MODEL_ABBR
+from datamodules.utils import PRETRAIN_MODEL_ABBR, InferenceFileProcessor
 from models.partial_opt import PartialOPTModel
 
 from transformers import logging
 logging.set_verbosity_error()
 
+from utils.pylogger import get_pylogger
+log = get_pylogger(__name__)
 
 class TokenizedDataset(Dataset):
 
@@ -39,12 +40,14 @@ class TokenizedDataset(Dataset):
 
 class EmbeddingsDataset(TokenizedDataset):
 
-    def __init__(self, input_ids, attention_mask, input_embeds):
+    def __init__(self, input_ids, attention_mask, inputs_hidden_state):
         super().__init__(input_ids, attention_mask)
-        self.input_embeds = input_embeds
+        self.inputs_hidden_state = inputs_hidden_state
     
     def __getitem__(self, index):
-        return self.input_ids[index], self.attention_mask[index], self.input_embeds[index]
+        return self.input_ids[index], \
+               self.attention_mask[index], \
+               self.inputs_hidden_state[index]
     
     def __len__(self):
         return super().__len__()
@@ -52,13 +55,17 @@ class EmbeddingsDataset(TokenizedDataset):
 
 class PredictWriter(BasePredictionWriter):
 
-    def __init__(self, output_dir, plm_name, n_freeze_layers,
-                 n_unfreeze_layers, write_interval):
+    def __init__(self, output_dir, plm_name,
+                 last_n_unfreeze, write_interval):
         super().__init__(write_interval)
         self.output_dir = output_dir
         self.plm_abbr = PRETRAIN_MODEL_ABBR[plm_name]
-        self.n_freeze_layers = n_freeze_layers
-        self.n_unfreeze_layers = n_unfreeze_layers
+        self.last_n_unfreeze = last_n_unfreeze
+        self.file_processor = InferenceFileProcessor(
+            processed_dir=output_dir,
+            plm_name=plm_name,
+            last_n_unfreeze=self.last_n_unfreeze,
+            )
 
     def write_on_epoch_end(self, trainer, pl_module, predictions,
                            batch_indices):
@@ -66,23 +73,13 @@ class PredictWriter(BasePredictionWriter):
         predictions = torch.cat(predictions[0], dim=0)
         batch_indices = [idx for idxs in batch_indices[0] for idx in idxs]
         batch_indices = torch.tensor(batch_indices)
-        torch.save(
-            predictions,
-            os.path.join(
-                self.output_dir, f"{self.plm_abbr}_"
-                f"freeze@{self.n_freeze_layers}_"
-                f"inferenced_embs_for_"
-                f"unfreeze@{self.n_unfreeze_layers}_"
-                f"{rank_idx}.pt"))
-        torch.save(
-            batch_indices,
-            os.path.join(
-                self.output_dir, f"{self.plm_abbr}_"
-                f"freeze@{self.n_freeze_layers}_"
-                f"inferenced_idxs_for_"
-                f"unfreeze@{self.n_unfreeze_layers}_"
-                f"{rank_idx}.pt"))
-
+        embs_file = self.file_processor.get_inference_file(is_embs=True,
+                                                           rank_idx=rank_idx)
+        idxs_file = self.file_processor.get_inference_file(is_embs=False,
+                                                           rank_idx=rank_idx)
+        torch.save(predictions, os.path.join(self.output_dir, embs_file))
+        torch.save(batch_indices, os.path.join(self.output_dir, idxs_file))
+        log.info(f"Rank {rank_idx} has written embeddings to {embs_file} and indices to {idxs_file}")
 
 class FrozenPartialPLM(pl.LightningModule):
 
@@ -94,8 +91,11 @@ class FrozenPartialPLM(pl.LightningModule):
         """ keep inner layers range is a tuple of both inclusive index (start, end) """
         super(FrozenPartialPLM, self).__init__()
         self.plm_name = plm_name
+        self.keep_embed_layer = keep_embed_layer
+        self.keep_inner_layers_range = keep_inner_layers_range
+        self.plm_config = AutoConfig.from_pretrained(self.plm_name)
+        
         if self.plm_name.startswith("facebook"):
-            self.plm_config = AutoConfig.from_pretrained(self.plm_name)
             self.plm = PartialOPTModel.from_pretrained(
                 plm_name,
                 keep_embed_layer=keep_embed_layer,
@@ -103,30 +103,45 @@ class FrozenPartialPLM(pl.LightningModule):
 
         elif self.plm_name.startswith("bert"):
             self.plm = BertModel.from_pretrained(plm_name)
-            if self.plm_last_n_unfreeze > 0:
-                self.plm.encoder.layer = \
-                    self.plm.encoder.layer[:-self.plm_last_n_unfreeze]
-            else:
-                self.plm.encoder.layer = self.plm.encoder.layer
-
-        self.n_freeze_layers = self.plm.config.num_hidden_layers - self.plm_last_n_unfreeze
-
-        for params in self.plm.parameters():
+            # if self.plm_last_n_unfreeze > 0:
+            #     self.plm.encoder.layer = \
+            #         self.plm.encoder.layer[:-self.plm_last_n_unfreeze]
+            # else:
+            #     self.plm.encoder.layer = self.plm.encoder.layer
+            
+        names = []
+        params_num = 0
+        for name, params in self.plm.named_parameters():
             params.requires_grad = False
+            names.append(name)
+            params_num += params.numel()
+        log.info(f"Total memory of frozen parameters: {params_num * 4 / 1024 / 1024} MB")
+        if len(names) > 4:
+            log.info(f"Names of frozen parameters from {names[:2]} to {names[-2:]}")
+        else:
+            log.info(f"Names of frozen parameters: {names}")
+        
 
-    def forward(self, input_ids, attention_mask):
-        output = self.plm(input_ids, attention_mask)
+    def forward(self, input_ids, attention_mask, inputs_hidden_state):
+        output = self.plm(input_ids=input_ids,
+                          attention_mask=attention_mask,
+                          inputs_hidden_state=inputs_hidden_state)
         return output
 
     def predict_step(self, batch, batch_idx):
-        input_ids, attention_mask = batch
-        output = self(input_ids, attention_mask)
+        if self.keep_embed_layer:
+            input_ids, attention_mask = batch
+            inputs_hidden_state = None
+        else:
+            _, attention_mask, inputs_hidden_state = batch
+            input_ids = None
+        output = self(input_ids, attention_mask, inputs_hidden_state)
         return output.last_hidden_state
 
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
-    argparser.add_argument("--plm_name", type=str, default="facebook/opt-125m")
+    argparser.add_argument("--plm_name", type=str, required=True)
     argparser.add_argument("--processed_dir", type=str, required=True)
     argparser.add_argument("--processed_items_file", type=str, required=True)
     argparser.add_argument("--input_item_embs_file", type=str_or_none, default=None)
@@ -143,41 +158,56 @@ if __name__ == "__main__":
     plm_config = AutoConfig.from_pretrained(args.plm_name)
     
     levels = ["none", "emb"] + [i for i in range(plm_config.num_hidden_layers)]
-    assert args.input_layer in levels
-    assert args.target_layer in levels
+    assert args.input_layer in levels[0:-1]
+    assert args.target_layer in levels[1:]
+    assert levels.index(args.input_layer) < levels.index(args.target_layer)
     
-    input_level_idx = levels.index(args.input_layer)
-    target_level_idx = levels.index(args.target_layer)
-    assert target_level_idx < plm_config.num_hidden_layers
-    assert input_level_idx < target_level_idx
+    input_layer = None if args.input_layer in ["none", "emb"] else args.input_layer 
+    target_layer = None if args.target_layer == "emb" else args.target_layer 
+    n_freeze = 0 if target_layer is None else args.target_layer + 1
+    last_n_unfreeze = plm_config.num_hidden_layers - n_freeze
+    
+    # set the model
+    keep_embed_layer = True if input_layer is None else False
+    if target_layer is None:
+        keep_inner_layers_range = None
+    elif target_layer is not None and keep_embed_layer:
+        keep_inner_layers_range = (0, target_layer)
+    else:
+        # the keep_decoders_range tuple is a left-closed and right-closed interval [a, b] as input 
+        keep_inner_layers_range = (input_layer+1, target_layer)
     
     # load the processed input_ids and attention_mask
     items_path = os.path.join(args.processed_dir, args.processed_items_file)
     items = np.load(items_path, allow_pickle=True)
     input_ids = items[0]
     attention_mask = items[1]
+    n_items = len(input_ids)
     
     # set the dataset
     # load the input item embeddings if needed
-    if input_level_idx > 0:
+    if keep_embed_layer:
+        items = TokenizedDataset(input_ids, attention_mask)
+    else:
         assert args.input_item_embs_file is not None
         item_embs_path = os.path.join(args.processed_dir, args.input_item_embs_file)
         items_embs = torch.load(item_embs_path)
-        items = EmbeddingsDataset(input_ids, attention_mask, items_embs)
-    else:
-        items = EmbeddingsDataset(input_ids, attention_mask)
-    
+        # sanity check
+        if len(items_embs) == n_items:
+            items = EmbeddingsDataset(input_ids, attention_mask, items_embs)
+        else:
+            raise ValueError(
+                "The number of items in collected inferenced data is not equal to the dataset's number of items." + \
+                "This may becaused specifying a wrong inferenced embeddings file in `--input_item_embs_file`." + \
+                "Or caused by the distributed inference process, which means data is sampled by the DDP sampler, some " + \
+                "items may be sampled by multiple times to ensure the same workload of items for each device. " + \
+                "Please use single device to inference if it is the case.")
+            
     # set the dataloader
-        items_loader = DataLoader(items,
-                                  batch_size=args.batch_size,
-                                  num_workers=args.num_workers)
+    items_loader = DataLoader(items,
+                              batch_size=args.batch_size,
+                              num_workers=args.num_workers)
         
-    # set the model
-    keep_embed_layer = True if input_level_idx == 0 else False
-    if target_level_idx < 2:
-        keep_inner_layers_range = None
-    else:
-        keep_inner_layers_range = (0, target_level_idx - 2)
     model = FrozenPartialPLM(
         plm_name=args.plm_name,
         keep_embed_layer=keep_embed_layer,
@@ -191,12 +221,10 @@ if __name__ == "__main__":
         callbacks=[
             PredictWriter(output_dir=args.processed_dir,
                           plm_name=args.plm_name,
-                          n_freeze_layers=model.n_freeze_layers,
-                          n_unfreeze_layers=args.plm_last_n_unfreeze,
-                          write_interval="epoch")
+                          last_n_unfreeze=last_n_unfreeze,
+                          write_interval="epoch"),
         ],
         logger=False,
         deterministic=True,
-        enable_model_summary=True,
     )
     inferenced_data = inferencer.predict(model, items_loader)
