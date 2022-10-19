@@ -57,11 +57,27 @@ def right_padding_left_trancate(data, seq_len):
     return item_seqs, targets
 
 
-def leave_one_out_split(data):
+def seq_leave_one_out_split(input_seqs, targets, pad_id=0):
     """Leave one out split"""
     """ split data into train , val and test """
-    pass
-
+    input_seqs_dict = {}
+    targets_dict = {}
+    pad_id=0
+    masks = np.where(input_seqs != pad_id, True, False)
+    last_idx = np.sum(masks, axis=1) - 1
+    last_idx = np.expand_dims(last_idx, axis=1)
+    for stage in ["test", "valid", "train"]:
+        input_seqs_dict[stage] = input_seqs.copy()
+        targets_dict[stage] = targets.copy()
+        if stage != "test":
+            np.put_along_axis(input_seqs_dict[stage], last_idx, pad_id, axis=1)
+            np.put_along_axis(targets_dict[stage], last_idx, pad_id, axis=1)
+            last_idx = np.concatenate([last_idx, last_idx-1], axis=1)
+            
+    return [
+        (input_seqs_dict[stage], targets_dict[stage]) 
+        for stage in ["train", "valid", "test"]
+        ]
 
 def ratio_split(data, ratios):
     """Split data into train, valid and test set by ratio"""

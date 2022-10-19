@@ -85,6 +85,7 @@ class SeqRecDataModuleConfig:
 
     def __init__(self, dataset: str, **kwargs):
         self.dataset = dataset
+        self.split_type = kwargs.get("split_type", "ratio")
         self.plm_name: str = kwargs.pop("plm_name", "facebook/opt-125m")
         self.plm_last_n_unfreeze: int = \
             kwargs.pop("plm_last_n_unfreeze", 0)
@@ -98,6 +99,9 @@ class SeqRecDataModuleConfig:
         self.pin_memory: bool = kwargs.pop("pin_memory", True)
 
         plm_config = AutoConfig.from_pretrained(self.plm_name)
+        
+        if self.split_type not in ["ratio", "leave_one_out"]:
+            raise ValueError("split_type must be in ['ratio', 'leave_one_out']")
         
         assert self.min_item_seq_len > 0
         assert self.tokenized_len > 0

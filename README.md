@@ -1,7 +1,7 @@
 
 ### how to use
 Clone this repository first, and download the data from [here](https://share.weiyun.com/eJh8dB51), uncompress data.tar to the folder `data/`  
-If you want to gain accessment of the data, please contact me via wenhao.deng@foxmail.com for the password.  
+If you want to gain access to the data, please contact me via wenhao.deng@foxmail.com for the password.  
 
 The file structure should be like this:
 ```
@@ -52,16 +52,15 @@ rm tmp*
 Or setting `--num_workers` to 0 and `--pre_inference_num_workers` to 0 if using pre-inference.
 
 ### thoughts of implementation
-1. For super large model like OPT13B or larger, we split the model into layers and infer the embs layer by layer. It could save GPU memory when only a few layers are needed to be fine-tuned. 
+1. For super large model like OPT13B or larger, we split the model into layers and infer the embs layer after layer. It could save GPU memory when only a few layers on top are needed to be fine-tuned. 
 
-2. Although we can store the pre-inferenced embs as an embedding layer inside the recommender model, it still takes GPU memory. So we store them as a numpy array and load them as a tensor in dataloader when needed. This slow down the training process, but save GPU memory. 
+2. Although we can store the pre-inferenced embs as an non-trainale embedding layer inside the recommender model, it still takes GPU memory. So we store them as a pt file and load them as a tensor in dataloader when needed. This slow down the training process compared with store as a non-trainable embedding layer, but save more GPU memory. 
 Take MIND_small as an example, the number of items is 52771, if we padding or truncate the item decription sequence to a fixed length 30, the size of item description matrix in float32 is 52771 * 30 * 768 * 4 Bytes = 4.9GB, which is too large to be loaded into GPU memory. 
 
 
 ### TODO
-1. Add a new class to store the pre-inferenced embs as a numpy array.
-2. BCE loss should access all the items, check [Accessing DataLoaders within LightningModule](https://pytorch-lightning.readthedocs.io/en/latest/guides/data.html#accessing-dataloaders-within-lightningmodule).
-3. add new argument `input_hidden_statets` to class `PartialOPT` to control whether to use the hidden states of the input sequence.
+1. When using BCE los, valid and test should access all the items, check [Accessing DataLoaders within LightningModule](https://pytorch-lightning.readthedocs.io/en/latest/guides/data.html#accessing-dataloaders-within-lightningmodule).
+
 
 ### notes
 ##### 1. Args of `run.py`
@@ -133,8 +132,7 @@ python datamodules/preinference.py \
     --pre_inference_precision 32 \
     --pre_inference_batch_size 1 \
     --pre_inference_num_workers 4 \
-    --pre_inference_layer_wise True \
-    --keep_n_freeze_files [10, 11, 12]
+    --pre_inference_layer_wise True 
 ```
 
 Args of `preinference.py`:

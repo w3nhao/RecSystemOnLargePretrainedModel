@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
-from datamodules.utils import (pre_inference, ratio_split, str_fields2ndarray,
+from datamodules.utils import (pre_inference, ratio_split, 
+                               seq_leave_one_out_split, str_fields2ndarray,
                                ITEM_ID_SEQ_FIELD, TARGET_FIELD, TEXT_ID_SEQ_FIELD,
                                ATTENTION_MASK_FIELD, PRETRAIN_MODEL_ABBR)
 from datamodules.data_preprocessor import DataPreprocessor
@@ -129,35 +130,44 @@ class SeqDataModule(LightningDataModule):
                 field_len=tokenized_len,
             )
 
-            splitted_df = ratio_split(data=inters, ratios=[0.8, 0.1, 0.1])
             stages = ["train", "val", "test"]
             item_id_seqs, targets = {}, {}
-            for df, stage in zip(splitted_df, stages):
-                item_id_seqs[stage], targets[stage] = str_fields2ndarray(
+            split_type = "ratio"
+            if split_type == "ratio":
+                splitted_df = ratio_split(data=inters, ratios=[0.8, 0.1, 0.1])
+                for df, stage in zip(splitted_df, stages):
+                    item_id_seqs[stage], targets[stage] = str_fields2ndarray(
+                        df=df,
+                        fields=[ITEM_ID_SEQ_FIELD, TARGET_FIELD],
+                        field_len=sasrec_seq_len,
+                    )
+            else:
+                input_seqs, targets = str_fields2ndarray(
                     df=df,
                     fields=[ITEM_ID_SEQ_FIELD, TARGET_FIELD],
-                    field_len=sasrec_seq_len,
+                    field_len=20,
                 )
+                splitted_data = seq_leave_one_out_split(
+                    input_seqs=input_seqs,
+                    targets=targets)
+                for _data, stage in zip(splitted_data, stages):
+                    item_id_seqs[stage], targets[stage] = _data
+            
 
-            self.data_train = TextSeqRecDataset(
-                item_id_seqs=item_id_seqs["train"],
-                targets=targets["train"],
-                tokenized_ids=tokenized_ids,
-                attention_mask=attention_mask,
-            )
-            self.data_val = TextSeqRecDataset(
-                item_id_seqs=item_id_seqs["val"],
-                targets=targets["val"],
-                tokenized_ids=tokenized_ids,
-                attention_mask=attention_mask,
-            )
+            [data_train, data_val, data_test] = [
+                TextSeqRecDataset(
+                    item_id_seqs=item_id_seqs[stage],
+                    targets=targets[stage],
+                    tokenized_ids=tokenized_ids,
+                    attention_mask=attention_mask,
+                )
+                for stage in stages
+            ]
 
-            self.data_test = TextSeqRecDataset(
-                item_id_seqs=item_id_seqs["test"],
-                targets=targets["test"],
-                tokenized_ids=tokenized_ids,
-                attention_mask=attention_mask,
-            )
+            self.data_train = data_train
+            self.data_val = data_val
+            self.data_test = data_test
+        
 
     def train_dataloader(self):
         """Return the training dataloader."""
@@ -206,6 +216,7 @@ class SeqDataModule(LightningDataModule):
         """Add datamodule specific arguments to the parser."""
         parser = parent_parser.add_argument_group("SeqRecDataModule")
         parser.add_argument("--dataset", type=str, default="MIND_small")
+        parser.add_argument("--split_type", type=str, default="ratio")
         parser.add_argument("--sasrec_seq_len", type=int, default=20)
         parser.add_argument("--tokenized_len", type=int, default=30)
         parser.add_argument("--batch_size", type=int, default=64)
@@ -222,6 +233,7 @@ class SeqDataModule(LightningDataModule):
         """Build configs from arguments."""
         config = SeqRecDataModuleConfig(
             dataset=args.dataset,
+            split_type=args.split_type,
             min_item_seq_len=args.min_item_seq_len,
             max_item_seq_len=args.max_item_seq_len,
             sasrec_seq_len=args.sasrec_seq_len,
@@ -400,6 +412,7 @@ class PreInferSeqDataModule(SeqDataModule):
         """Build configs from arguments."""
         config = PreInferSeqRecDMConfig(
             dataset=args.dataset,
+            split_type=args.split_type,
             plm_name=args.plm_name,
             plm_last_n_unfreeze=args.plm_last_n_unfreeze,
             keep_n_freeze_files=args.keep_n_freeze_files,
