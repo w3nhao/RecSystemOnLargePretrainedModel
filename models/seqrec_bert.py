@@ -149,8 +149,9 @@ class BERTSeqRec(TextSeqRec):
         else:
             plm_lr = self.hparams.config.plm_lr
             layer_decay = self.hparams.config.plm_lr_layer_decay
+            plm_wd = self.hparams.config.plm_weight_decay
             # set different learning rate for different layers
-            bert_tuning_params = self._set_bert_lr(plm_lr, layer_decay, wd)
+            bert_tuning_params = self._set_bert_lr(plm_lr, layer_decay, plm_wd)
             bert_tuning_names = [
                 "bert." + layer["name"] for layer in bert_tuning_params
             ]
@@ -187,6 +188,7 @@ class BERTSeqRec(TextSeqRec):
         # shared parameters of fine-tuneing PLM
         parser.add_argument("--plm_lr", type=float, default=1e-5)
         parser.add_argument("--plm_lr_layer_decay", type=float, default=0.8)
+        parser.add_argument("--plm_weight_decay", type=float, default=0.0)
         parser.add_argument("--pooling_method", type=str, default="cls")
         return parent_parser
 
@@ -197,6 +199,7 @@ class BERTSeqRec(TextSeqRec):
             plm_last_n_unfreeze=args.plm_last_n_unfreeze,
             plm_lr=args.plm_lr,
             plm_lr_layer_decay=args.plm_lr_layer_decay,
+            plm_weiget_decay=args.plm_weight_decay,
             projection_n_layers=args.projection_n_layers,
             projection_inner_sizes=args.projection_inner_sizes,
             pooling_method=args.pooling_method,

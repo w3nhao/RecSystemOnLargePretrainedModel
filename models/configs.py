@@ -28,9 +28,11 @@ class TextSeqRecConfig(SeqRecConfig):
 
         plm_lr = kwargs.pop("plm_lr", 1e-5)
         plm_lr_layer_decay = kwargs.pop("plm_lr_layer_decay", 0.8)
+        plm_weight_decay = kwargs.pop("plm_weiget_decay", 0.0)
         if self.plm_last_n_unfreeze != 0:
             self.plm_lr = plm_lr
             self.plm_lr_layer_decay = plm_lr_layer_decay
+            self.plm_weight_decay = plm_weight_decay
 
         self.projection_n_layers = kwargs.pop("projection_n_layers", 5)
         self.projection_inner_sizes = kwargs.pop("projection_inner_sizes",
