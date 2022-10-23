@@ -81,23 +81,20 @@ def get_data_configs(dataset):
     return data_configs
 
 
-class SeqRecDataModuleConfig:
-
+class DataModuleConfig:
     def __init__(self, dataset: str, **kwargs):
         self.dataset = dataset
-        self.split_type = kwargs.get("split_type", "ratio")
         self.plm_name: str = kwargs.pop("plm_name", "facebook/opt-125m")
-        self.plm_last_n_unfreeze: int = \
-            kwargs.pop("plm_last_n_unfreeze", 0)
+        self.plm_last_n_unfreeze: int =  kwargs.pop("plm_last_n_unfreeze", 0)
+        self.split_type: str = kwargs.pop("split_type", "ratio")
         self.min_item_seq_len: int = kwargs.pop("min_item_seq_len", 5)
-        self.max_item_seq_len: Optional[int] = \
-            kwargs.pop("max_item_seq_len", None)
-        self.sasrec_seq_len: int = kwargs.pop("sasrec_seq_len", 20)
+        self.max_item_seq_len: Optional[int] =  kwargs.pop("max_item_seq_len", None)
         self.tokenized_len: int = kwargs.pop("tokenized_len", 30)
+        
         self.batch_size: int = kwargs.pop("batch_size", 64)
         self.num_workers: int = kwargs.pop("num_workers", 4)
         self.pin_memory: bool = kwargs.pop("pin_memory", True)
-
+        
         plm_config = AutoConfig.from_pretrained(self.plm_name)
         
         if self.split_type not in ["ratio", "leave_one_out"]:
@@ -105,7 +102,7 @@ class SeqRecDataModuleConfig:
         
         assert self.min_item_seq_len > 0
         assert self.tokenized_len > 0
-        assert self.sasrec_seq_len > 0
+        
         if self.max_item_seq_len is not None:
             assert self.max_item_seq_len > 0
             assert self.max_item_seq_len >= self.min_item_seq_len
@@ -113,8 +110,20 @@ class SeqRecDataModuleConfig:
         if self.plm_last_n_unfreeze is not None:
             assert self.plm_last_n_unfreeze >= -1
             assert self.plm_last_n_unfreeze <= plm_config.num_hidden_layers
+            
+        if kwargs:
+            raise ValueError(f"Unrecognized arguments: {kwargs}")
 
-class PreInferSeqRecDMConfig(SeqRecDataModuleConfig):
+
+class SeqDataModuleConfig(DataModuleConfig):
+
+    def __init__(self, dataset: str, **kwargs):
+        self.sasrec_seq_len: int = kwargs.pop("sasrec_seq_len", 20)
+        assert self.sasrec_seq_len > 0
+        super().__init__(dataset, **kwargs)
+
+
+class PreInferSeqDataModuleConfig(SeqDataModuleConfig):
     def __init__(self, dataset: str, **kwargs):
         self.pre_inference_batch_size= kwargs.pop("pre_inference_batch_size", 1)
         self.pre_inference_precision = kwargs.pop("pre_inference_precision", 32)
@@ -130,3 +139,11 @@ class PreInferSeqRecDMConfig(SeqRecDataModuleConfig):
                 f"If you want to fully fine-tune the PLM, you should set --pre_inference to False."
                 f"If you want to do pre-inference, please set --plm_last_n_unfreeze >= 0."
                 )
+            
+
+class PointWiseDataModuleConfig(DataModuleConfig):
+    def __init__(self, dataset: str, **kwargs):
+        self.n_neg_sampling: int = kwargs.pop("n_neg_sampling", 1)
+        assert self.n_neg_sampling > 0
+        super().__init__(dataset, **kwargs)
+        
