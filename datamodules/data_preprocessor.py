@@ -7,6 +7,7 @@ from datamodules.utils import (
     tokenize,
     TEXT_ID_SEQ_FIELD,
     ATTENTION_MASK_FIELD,
+    USER_ID_FIELD,
 )
 
 
@@ -32,6 +33,8 @@ class DataPreprocessor:
 
         self.item_token_id, self.item_id_token, self.item_id_text = \
             None, None, None
+            
+        self.user_token_id, self.user_id_token = None, None
 
         self.lookup_df = self._load_data()
         self.processed_df = {}
@@ -50,7 +53,7 @@ class DataPreprocessor:
         return self.lookup_df[self.inter_table][self.item_seq_field] \
             .apply(len).max()
 
-    def prepare_inters(self, sasrec_seq_len):
+    def prepare_seq_inters(self, sasrec_seq_len):
         """Prepare interactions data"""
         inters = self.lookup_df[self.inter_table][self.item_seq_field].values
         item_seqs, targets = right_padding_left_trancate(
@@ -65,6 +68,19 @@ class DataPreprocessor:
         })
         
         return item_seqs, targets
+    
+    def prepare_point_wise_inters(self):
+        """Prepare point-wise interactions data"""
+        inters = self.lookup_df[self.inter_table].values
+        user_ids = inters[:, 0]
+        input_seqs = inters[:, 1]
+        
+        input_seqs_str = np.array([" ".join(seq) for seq in input_seqs.astype(str)])
+         
+        self.processed_df[self.inter_table] = pd.DataFrame({
+            "user_id": user_ids,
+            "input_seqs": input_seqs_str,
+        })
 
     def prepare_items(self, plm_name, tokenized_len):
         """Prepare items data"""
@@ -96,6 +112,7 @@ class DataPreprocessor:
         # self.drop_duplicates()
         self.item_token_id, self.item_id_token, self.item_id_text = \
             self._map_item_ID()
+        self.user_token_id, self.user_id_token = self._map_user_ID()
         self._filter_item_seq_by_num(self._min_item_seq_len,
                                      self._max_item_seq_len)
 
@@ -167,6 +184,15 @@ class DataPreprocessor:
             self.item_text_field].values
         item_id_text = ["[PAD]"] + item_id_text.tolist()
         return item_token_id, item_id_token, item_id_text
+    
+    def  _map_user_ID(self):
+        user_tokens = [self.lookup_df[self.inter_table][self.uid_field].values]
+        user_tokens = np.concatenate(user_tokens)
+        new_ids_list, mappings = pd.factorize(user_tokens)
+        user_id_token = np.array(["[PAD]"] + list(mappings))
+        user_token_id = {token: idx for idx, token in enumerate(user_id_token)}
+        self.lookup_df[self.inter_table][self.uid_field] = new_ids_list + 1
+        return user_token_id, user_id_token
 
     def save_inters(self, save_dir):
         if self.inter_table in self.processed_df:

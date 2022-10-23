@@ -7,7 +7,7 @@ from transformers import AutoConfig
 from utils.pylogger import get_pylogger
 from tqdm import tqdm
 
-
+USER_ID_FIELD = "user_id"
 ITEM_ID_SEQ_FIELD = "input_seqs"
 TARGET_FIELD = "targets"
 TEXT_ID_SEQ_FIELD = "tokenized_ids"
@@ -29,18 +29,40 @@ PRETRAIN_MODEL_ABBR = {
 log = get_pylogger(__name__)
 
 
-def str_fields2ndarray(df, fields, field_len, dtype=np.int64):
+def neg_sampling(batch, n_samping, n_items):
+    neg_samples = torch.randint(0, n_items, (n_samping, *batch.shape))
+    # mark which sample is positive
+    pos_mask = (neg_samples == batch.unsqueeze(0))
+    while pos_mask.any():
+        neg_samples[pos_mask] = torch.randint(0, n_items, (pos_mask.sum(),))
+        pos_mask = (neg_samples == batch.unsqueeze(0))
+    return batch, neg_samples
+
+
+def str_fields2ndarray(df, fields, field_lens, dtype=np.int64):
     """Convert string fields in pandas df to np array"""
     """ '1 2 3' -> [1, 2, 3] """
+    assert isinstance(fields, list)
+    assert isinstance(field_lens, list)
+    assert len(fields) == len(field_lens)
+    
     features = {}
-    for field in fields:
-        features[field] = np.empty((len(df), field_len), dtype=dtype)
+    for field, field_len in zip(fields, field_lens):
+        if field_len is None:
+            log.warning(f"field_len is None, the ndarray of field {field} will be in "
+                        f"variable length and dtype=object")
+            features[field] = np.empty((len(df), ), dtype=object)
+        else:
+            features[field] = np.empty((len(df), field_len), dtype=dtype)
         for i, seq in enumerate(df[field].values):
             seq_arr = np.array(list(seq.split(" ")), dtype=dtype)
             features[field][i] = seq_arr
-    ndarrays = [features[f] for f in fields]
+            
+    if len(fields) == 1:
+        ndarrays = features[fields[0]]
+    else:
+        ndarrays = [features[f] for f in fields]
     return ndarrays
-
 
 def right_padding_left_trancate(data, seq_len):
     """Generate items seq like [1, 2, 3, 0 , 0] and targets like [2, 3, 4, 0, 0]"""
@@ -55,7 +77,6 @@ def right_padding_left_trancate(data, seq_len):
             targets[i, :len(data) - 1] = data[1:]
 
     return item_seqs, targets
-
 
 def seq_leave_one_out_split(input_seqs, targets, pad_id=0):
     """Leave one out split"""
@@ -76,6 +97,19 @@ def seq_leave_one_out_split(input_seqs, targets, pad_id=0):
             
     return [
         (input_seqs_dict[stage], targets_dict[stage]) 
+        for stage in ["train", "valid", "test"]
+        ]
+    
+def point_wise_leave_one_out_split(user_ids, item_id_seqs):
+    """ Leave one out split for point wise data """
+    """ split data into train , val and test """
+    item_ids_dict = {}
+    for uid, item_id_seq in zip(user_ids, item_id_seqs):
+        item_ids_dict["train"] = item_id_seq[:-2]
+        item_ids_dict["valid"] = item_id_seq[-2:-1]
+        item_ids_dict["test"] = item_id_seq[-1:]
+    return [
+        (user_ids, item_ids_dict[stage]) 
         for stage in ["train", "valid", "test"]
         ]
 
@@ -251,7 +285,6 @@ def pre_inference(
         log.info(
             f"finish inferencing {plm_name} for unfreeze last {last_n_unfreeze} layers"
         )
-    raise
 
 class InferenceFileProcessor:
 
@@ -355,26 +388,13 @@ class InferenceFileProcessor:
 
     def gather_inference_results(self, n_freeze):
         """collect inference results from all devices"""
-
-        files = self.get_files_in_processed_dir()
-
         # inferenced result name format:
         # OPT125M_freeze@10_inferenced_idxs_rank@0.pt
         # OPT125M_freeze@10_inferenced_embs_rank@0.pt
         # the last number before .pt is the device id
         file_prefix = f"{self.plm_abbr}_freeze@{n_freeze}_inferenced"
         
-        if self.n_inferenc_devices is None:
-            # search max device id
-            ranks = []
-            for f in files:
-                if f"{file_prefix}_idxs" in f:
-                    ranks.append(f.split("_")[-1].split(".")[0].split("@")[1])
-            if ranks == []:
-                raise RuntimeError(f"No inference result like {file_prefix} found.")
-            max_rank = max(int(rank) for rank in ranks)
-        else:
-            max_rank = self.n_inferenc_devices - 1
+        max_rank = self.n_inferenc_devices - 1
 
         retry_times = 10
         for i in range(retry_times):  
@@ -406,7 +426,8 @@ class InferenceFileProcessor:
 
         inferenced_embs = torch.cat(inferenced_embs, dim=0)
         sorted_embs = inferenced_embs[sorted_idxs]
-
+        
+        files = self.get_files_in_processed_dir()
         # remove the tmp result files
         for f in files:
             if file_prefix in f and "rank" in f:
