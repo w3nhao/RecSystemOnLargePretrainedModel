@@ -117,9 +117,9 @@ class FrozenPartialPLM(pl.LightningModule):
             params_num += params.numel()
         log.info(f"Total memory of frozen parameters: {params_num * 4 / 1024 / 1024} MB")
         if len(names) > 4:
-            log.info(f"Names of frozen parameters from {names[:2]} to {names[-2:]}")
+            log.info(f"Inferenecing by names of frozen parameters from {names[:2]} to {names[-2:]}")
         else:
-            log.info(f"Names of frozen parameters: {names}")
+            log.info(f"Inferenecing by names of frozen parameters: {names}")
         
 
     def forward(self, input_ids, attention_mask, inputs_hidden_state):
