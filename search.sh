@@ -2,7 +2,7 @@ OBJECTIVE="test_HR@10"
 
 # datamodule
 TOKENIZED_LEN=30
-NUM_WORKERS=4
+NUM_WORKERS=10
 MIN_ITEM_SEQ_LEN=5
 MAX_ITEM_SEQ_LEN="None"
 SPLIT_TYPE="leave_one_out"
@@ -26,15 +26,14 @@ TOPK_LIST="5 10 20"
 
 # text encoder
 POOLING_METHOD="mean"
-PRETRAINED_MODEL="facebook/opt-1.3b"
-UNFREEZE=1
+PRETRAINED_MODEL="facebook/opt-125m"
 PLM_LR=5e-5
 PLM_LR_LAYER_DECAY=0.8
+PLM_WEIGHT_DECAY=0.0
 PROJECTION_N_LAYERS=1
 PROJECTION_INNER_SIZES=""
 
 # pre-inference
-PRE_INFERENCE="True"
 PRE_INFERENCE_BATCH_SIZE=1
 PRE_INFERENCE_DEVICES="4 5 6 7"
 PRE_INFERENCE_NUM_WORKERS=0
@@ -42,21 +41,27 @@ PRE_INFERENCE_PRECISION=32
 PRE_INFERENCE_LAYER_WISE="False"
 
 # trainer
-ACCELERATOR="gpu"
-STRATEGY="none"
+INPUT_TYPE="text"
+ARCHITECTURE="sasrec"
+DATASET="MIND_small"
+PRE_INFERENCE="True"
+UNFREEZE=0
+N_NEG_SAMPLING=1
+CHECK_VAL_EVERY_N_EPOCH=1
 MAX_EPOCHS=150
 EARLY_STOPPING=10
-DATASET="MIND_small"
-INPUT_TYPE="id"
 PRECISION=32
+ACCELERATOR="gpu"
+STRATEGY="none"
 DEVICES="4 5 6 7" 
 # 1e-5 7e-5 1e-4 5e-4 1e-3
 # 0.0 0.01 0.1 
-for dim in 1024
+
+for dim in 512
 do
   for lr in 1e-4
   do
-    for wd in 0.0
+    for wd in 0.1
     do
       for bs in 64
       do
@@ -97,6 +102,7 @@ do
                         --last_query_len $LAST_QUERY_LEN \
                         --plm_lr $PLM_LR \
                         --plm_lr_layer_decay $PLM_LR_LAYER_DECAY \
+                        --plm_weight_decay $PLM_WEIGHT_DECAY \
                         --strategy $STRATEGY \
                         --pre_inference $PRE_INFERENCE \
                         --pre_inference_batch_size $PRE_INFERENCE_BATCH_SIZE \
@@ -104,7 +110,10 @@ do
                         --pre_inference_precision $PRE_INFERENCE_PRECISION \
                         --pre_inference_num_workers $PRE_INFERENCE_NUM_WORKERS \
                         --pre_inference_layer_wise $PRE_INFERENCE_LAYER_WISE \
-                        --split_type $SPLIT_TYPE 
+                        --split_type $SPLIT_TYPE \
+                        --check_val_every_n_epoch $CHECK_VAL_EVERY_N_EPOCH  \
+                        --architecture $ARCHITECTURE \
+                        --n_neg_sampling $N_NEG_SAMPLING 
       done
     done
   done

@@ -21,7 +21,7 @@ Then run the following command to setup the environment and the data:
 conda create -n plmrs python=3.8
 conda activate plmrs
 
-wget https://mirror.sjtu.edu.cn/pytorch-wheels/cu113/torch-1.12.1+cu113-cp38-cp38-linux_x86_64.whl
+wget https://download.pytorch.org/whl/cu113/torch-1.12.1%2Bcu113-cp38-cp38-linux_x86_64.whl
 pip install torch-1.12.1+cu113-cp38-cp38-linux_x86_64.whl
 pip install -r requirements.txt
 

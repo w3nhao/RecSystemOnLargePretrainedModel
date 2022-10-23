@@ -2,7 +2,11 @@ from datetime import datetime
 from pytorch_lightning.strategies import DDPFullyShardedNativeStrategy
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 from datamodules.utils import PRETRAIN_MODEL_ABBR
-from datamodules import SeqDataModule, PreInferSeqDataModule
+from datamodules import (
+    SeqDataModule,
+    PreInferSeqDataModule,
+    PointWiseDataModule,
+)
 from models import (
     IDSeqRec,
     OPTSeqRec,
@@ -14,38 +18,46 @@ from models import (
 from utils.cli_parse import parse_boolean
 
 def get_model(args):
-    input_type = args.input_type
-    if input_type == 'id':
-        model = IDSeqRec
-    elif input_type == 'text':
-        plm_name = args.plm_name
-        use_prompt = args.use_prompt
-        pre_inference = args.pre_inference
-        if plm_name.startswith('facebook/opt'):
-            if pre_inference:
-                if use_prompt:
-                    raise NotImplementedError
-                else:
-                    model = PreInferOPTSeqRec
-            else:
-                if use_prompt:
-                    model = OPTPromptSeqRec
-                else:
-                    model = OPTSeqRec
-
-        elif plm_name.startswith('bert'):
-            if pre_inference:
-                if use_prompt:
+    if args.architecture == "dssm":
+        if args.input_type == 'id':
+            model = None
+        elif args.input_type == 'text':
+            if args.plm_name.startswith('facebook/opt'):
+                if args.pre_inference:
                     raise NotImplementedError
                 else:
                     raise NotImplementedError
-            else:
-                if use_prompt:
-                    model = BERTPromptSeqRec
+            elif args.plm_name.startswith('bert'):
+                if args.pre_inference:
+                    raise NotImplementedError
                 else:
-                    model = BERTSeqRec
-        else:
-            raise NotImplementedError
+                    raise NotImplementedError
+    elif args.architecture == "sasrec":
+        if args.input_type == 'id':
+            model = IDSeqRec
+        elif args.input_type == 'text':
+            if args.plm_name.startswith('facebook/opt'):
+                if args.pre_inference:
+                    if args.use_prompt:
+                        raise NotImplementedError
+                    else:
+                        model = PreInferOPTSeqRec
+                else:
+                    if args.use_prompt:
+                        model = OPTPromptSeqRec
+                    else:
+                        model = OPTSeqRec
+            elif args.plm_name.startswith('bert'):
+                if args.pre_inference:
+                    if args.use_prompt:
+                        raise NotImplementedError
+                    else:
+                        raise NotImplementedError
+                else:
+                    if args.use_prompt:
+                        model = BERTPromptSeqRec
+                    else:
+                        model = BERTSeqRec
     else:
         raise NotImplementedError
     return model
@@ -53,14 +65,22 @@ def get_model(args):
 
 def get_datamodule(args):
     # add new datamodule if needed
-    input_type = args.input_type
-    if input_type == 'id':
-        data_module = SeqDataModule
-    elif input_type == 'text':
-        if args.pre_inference:
-            data_module = PreInferSeqDataModule
-        else:
+    if args.architecture == "dssm":
+        if args.input_type == 'id':
+            data_module = PointWiseDataModule
+        elif args.input_type == 'text':
+            if args.pre_inference:
+                raise NotImplementedError
+            else:
+                data_module = PointWiseDataModule
+    elif args.architecture == "sasrec":
+        if args.input_type == 'id':
             data_module = SeqDataModule
+        elif args.input_type == 'text':
+            if args.pre_inference:
+                data_module = PreInferSeqDataModule
+            else:
+                data_module = SeqDataModule
     else:
         raise NotImplementedError
     return data_module
@@ -91,6 +111,7 @@ def add_program_args(args, parent_parser):
     parser.add_argument("--devices", type=int, nargs="+", default=[0])
     parser.add_argument("--precision", type=int, default=32)
     parser.add_argument("--accelerator", type=str, default="gpu")
+    parser.add_argument("--check_val_every_n_epoch", type=int, default=1)
     parser.add_argument("--early_stop_patience",
                         type=int,
                         default=10,
@@ -120,6 +141,8 @@ def add_program_args(args, parent_parser):
 def read_distributed_strategy(args):
     if args.strategy == "none":
         strategy = "ddp" if len(args.devices) > 1 else None
+    elif args.strategy == "ddp_find_unused_parameters_false":
+        strategy = "ddp_find_unused_parameters_false"
     elif args.strategy == "stage_2":
         strategy = "deepspeed_stage_2"
     elif args.strategy == "stage_2_offload":

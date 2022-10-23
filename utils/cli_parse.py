@@ -22,3 +22,7 @@ def str_or_none(s):
 
 def int_or_none(x):
     return None if x.lower() == "none" else int(x)
+
+
+def float_or_int(x):
+    return float(x) if "." in x else int(x)

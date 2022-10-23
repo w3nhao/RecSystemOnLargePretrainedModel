@@ -34,8 +34,13 @@ if __name__ == "__main__":
     argparser.add_argument("--input_type",
                            type=str,
                            default="id",
-                           help="input type of the model, "
-                           "only support 'id' and 'test'")
+                           choices=["id", "text"],
+                           help="input type of the model, only support 'id' and 'test'")
+    argparser.add_argument("--architecture",
+                           type=str,
+                           default="sasrec",
+                           choices=["sasrec", "dssm"],
+                           help="model architecture, only support 'sasrec' and 'dssm'")                          
     
     # set program args
     temp_args, _ = argparser.parse_known_args()
@@ -102,7 +107,7 @@ if __name__ == "__main__":
         logger=[tb_logger, csv_logger],
         deterministic=True,
         strategy=strategy,
-        # val_check_interval=0.25,
+        check_val_every_n_epoch=args.check_val_every_n_epoch,
         # strategy="ddp_find_unused_parameters_false" if len(args.devices) > 1 else None,
     )
 
