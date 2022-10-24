@@ -49,6 +49,7 @@ class SeqDataModule(DataModule):
         tokenized_len = self.hparams.dm_config.tokenized_len
         sasrec_seq_len = self.hparams.dm_config.sasrec_seq_len
         plm_name = self.hparams.dm_config.plm_name
+        sampling_n = self.hparams.dm_config.sampling_n
 
         data_prep = DataPreprocessor(
             data_cfg=self.data_configs,
@@ -98,6 +99,9 @@ class SeqDataModule(DataModule):
                     data_prep.save_inters(self.inters_save_dir)
                     
                 num_items = data_prep.num_items
+                
+        if sampling_n is not None:
+            assert sampling_n < len(inters)
         
         return num_items
 
@@ -124,7 +128,7 @@ class SeqDataModule(DataModule):
             items = pd.read_csv(items_path, sep="\t", header=0)
 
             self.num_items = len(items)
-
+            
             tokenized_ids, attention_mask = str_fields2ndarray(
                 df=items,
                 fields=[TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD],
@@ -174,9 +178,8 @@ class SeqDataModule(DataModule):
             self.data_test = data_test
     
     # TODO
-    def _downsample(self, data, downsample_num):
+    def _downsampling(self, inters_df, items_df, downsample_num):
         """Downsample data.
-            downsample_num (int): Number of samples to be downsampled.
         """
         pass
 
@@ -224,6 +227,7 @@ class SeqDataModule(DataModule):
         config = SeqDataModuleConfig(
             dataset=args.dataset,
             split_type=args.split_type,
+            sampling_n=args.sampling_n,
             min_item_seq_len=args.min_item_seq_len,
             max_item_seq_len=args.max_item_seq_len,
             sasrec_seq_len=args.sasrec_seq_len,
@@ -257,27 +261,25 @@ class PreInferSeqDataModule(SeqDataModule):
     def prepare_data(self):
         num_items = super().prepare_data()
 
-        # load preprocessed tokenized_ids and attention_mask
         tokenized_len = self.hparams.dm_config.tokenized_len
-        item_table = self.data_configs["item_table"]
-        item_file = f"{item_table}_{self.tokenizer_abbr}.processed.tsv"
-        items_path = os.path.join(self.processed_dir, item_file)
-        items = pd.read_csv(items_path, sep="\t", header=0)
-        self.num_items = len(items)
-        tokenized_ids, attention_mask = str_fields2ndarray(
-            df=items,
-            fields=[TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD],
-            field_lens=[tokenized_len, tokenized_len],
-        )
-
         # save tokenized_ids and attention_mask as npy
-        item_file = f"{item_table}_{self.tokenizer_abbr}.processed.npy"
-        items_path = os.path.join(self.processed_dir, item_file)
-        if not os.path.isfile(items_path):
+        new_item_file = f"{item_table}_{self.tokenizer_abbr}.processed.npy"
+        new_items_path = os.path.join(self.processed_dir, new_item_file)
+        if not os.path.isfile(new_items_path):
+            # load old preprocessed tokenized_ids and attention_mask
+            item_table = self.data_configs["item_table"]
+            item_file = f"{item_table}_{self.tokenizer_abbr}.processed.tsv"
+            items_path = os.path.join(self.processed_dir, item_file)
+            items = pd.read_csv(items_path, sep="\t", header=0)
+            tokenized_ids, attention_mask = str_fields2ndarray(
+                df=items,
+                fields=[TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD],
+                field_lens=[tokenized_len, tokenized_len],
+            )
             tokenized_ids = np.expand_dims(tokenized_ids, axis=0)
             attention_mask = np.expand_dims(attention_mask, axis=0)
             items = np.concatenate((tokenized_ids, attention_mask), axis=0)
-            np.save(items_path, items)
+            np.save(new_items_path, items)
             
         plm_name = self.hparams.dm_config.plm_name
         last_n_unfreeze = self.hparams.dm_config.plm_last_n_unfreeze
@@ -431,6 +433,7 @@ class PreInferSeqDataModule(SeqDataModule):
         config = PreInferSeqDataModuleConfig(
             dataset=args.dataset,
             split_type=args.split_type,
+            sampling_n=args.sampling_n,
             plm_name=args.plm_name,
             plm_last_n_unfreeze=args.plm_last_n_unfreeze,
             pre_inference_batch_size=args.pre_inference_batch_size,
