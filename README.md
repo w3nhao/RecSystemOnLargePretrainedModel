@@ -23,7 +23,7 @@ conda activate plmrs
 
 wget https://download.pytorch.org/whl/cu113/torch-1.12.1%2Bcu113-cp38-cp38-linux_x86_64.whl
 pip install torch-1.12.1+cu113-cp38-cp38-linux_x86_64.whl
-pip install -r requirements.txt
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 cd data/setup_scripts
 python bilibili.py
