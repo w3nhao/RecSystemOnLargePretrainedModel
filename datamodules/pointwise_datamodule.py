@@ -204,6 +204,7 @@ class PointWiseDataModule(DataModule):
         config = PointWiseDataModuleConfig(
             dataset=args.dataset,
             split_type=args.split_type,
+            sampling_n=args.sampling_n,
             min_item_seq_len=args.min_item_seq_len,
             max_item_seq_len=args.max_item_seq_len,
             n_neg_sampling=args.n_neg_sampling,

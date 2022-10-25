@@ -9,7 +9,7 @@ from datamodules.utils import (pre_inference, ratio_split,
                                seq_leave_one_out_split, str_fields2ndarray,
                                ITEM_ID_SEQ_FIELD, TARGET_FIELD,
                                TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD,
-                               InferenceFileProcessor)
+                               GLOBAL_RANDOM_SEED, InferenceFileProcessor)
 from datamodules.data_preprocessor import DataPreprocessor
 from datamodules.dataset import TextSeqRecDataset, PreInferTextSeqRecDataset
 from datamodules.configs import PreInferSeqDataModuleConfig, SeqDataModuleConfig
@@ -128,7 +128,7 @@ class SeqDataModule(DataModule):
                 "sampling_n should be smaller than the number of interactions"
             
             # sampling interactions
-            inters = inters.sample(n=sampling_n)
+            inters = inters.sample(n=sampling_n, random_state=GLOBAL_RANDOM_SEED)
             input_iid_seqs, target_iid_seqs = str_fields2ndarray(
                 df=inters,
                 fields=[ITEM_ID_SEQ_FIELD, TARGET_FIELD],
@@ -234,7 +234,8 @@ class SeqDataModule(DataModule):
         input_item_id_seqs, target_item_id_seqs = {}, {}
         if split_type == "ratio":
             log.info("Splitting data by ratio: train/val/test = 0.8/0.1/0.1")
-            splitted_df = ratio_split(data=inters, ratios=[0.8, 0.1, 0.1])
+            splitted_df = ratio_split(
+                data=inters, ratios=[0.8, 0.1, 0.1], random_state=GLOBAL_RANDOM_SEED)
             for df, stage in zip(splitted_df, stages):
                 input_item_id_seqs[stage], target_item_id_seqs[stage] = \
                     str_fields2ndarray(

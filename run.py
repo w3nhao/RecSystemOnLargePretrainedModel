@@ -15,6 +15,7 @@ from utils import (
 )
 
 from utils.pylogger import get_pylogger
+from datamodules.utils import GLOBAL_RANDOM_SEED
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 logging.set_verbosity_error()
@@ -23,7 +24,7 @@ log = get_pylogger(__name__)
 
 if __name__ == "__main__":
 
-    seed_everything(42, workers=True)
+    seed_everything(GLOBAL_RANDOM_SEED, workers=True)
 
     # ------------------------
     # SETTINGS

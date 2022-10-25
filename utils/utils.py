@@ -1,7 +1,6 @@
 from datetime import datetime
 from pytorch_lightning.strategies import DDPFullyShardedNativeStrategy
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
-from datamodules.configs import PRETRAIN_MODEL_ABBR
 from datamodules import (
     SeqDataModule,
     PreInferSeqDataModule,
@@ -16,6 +15,7 @@ from models import (
     PreInferOPTSeqRec,
 )
 from utils.cli_parse import parse_boolean
+from models.utils import PRETRAIN_MODEL_ABBR
 
 def get_model(args):
     if args.architecture == "dssm":

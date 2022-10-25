@@ -4,8 +4,8 @@ import subprocess
 import time
 import numpy as np
 from transformers import AutoConfig
-from datamodules.configs import PRETRAIN_MODEL_ABBR
 from utils.pylogger import get_pylogger
+from models.utils import PRETRAIN_MODEL_ABBR
 from tqdm import tqdm
 
 USER_ID_FIELD = "user_id"
@@ -13,6 +13,8 @@ ITEM_ID_SEQ_FIELD = "input_seqs"
 TARGET_FIELD = "targets"
 TEXT_ID_SEQ_FIELD = "tokenized_ids"
 ATTENTION_MASK_FIELD = "attention_mask"
+
+GLOBAL_RANDOM_SEED = 42
 
 log = get_pylogger(__name__)
 
@@ -101,17 +103,17 @@ def point_wise_leave_one_out_split(user_ids, item_id_seqs):
         for stage in ["train", "valid", "test"]
         ]
 
-def ratio_split(data, ratios):
+def ratio_split(data, ratios, random_state):
     """Split data into train, valid and test set by ratio"""
     """ fixed ratio split (train:0.8, valid:0.1, test:0.1) """
     assert sum(ratios) == 1.0
     train_ratio, valid_ratio, test_ratio = ratios
     train_data = data.sample(
-        frac=train_ratio, random_state=GLOBAL_RANDOM_SEED)
+        frac=train_ratio, random_state=random_state)
     rest_data = data[~data.index.isin(train_data.index)]
     valid_frac = valid_ratio / (valid_ratio + test_ratio)
     valid_data = rest_data.sample(
-        frac=valid_frac, random_state=GLOBAL_RANDOM_SEED)
+        frac=valid_frac, random_state=random_state)
     test_data = rest_data[~rest_data.index.isin(valid_data.index)]
 
     return train_data, valid_data, test_data

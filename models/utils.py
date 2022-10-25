@@ -1,7 +1,18 @@
-import pytorch_lightning as pl
 from transformers import OPTModel, BertModel
 import torch
 
+PRETRAIN_MODEL_ABBR = {
+    "facebook/opt-125m": "OPT125M",
+    "facebook/opt-350m": "OPT350M",
+    "facebook/opt-1.3b": "OPT1.3B",
+    "facebook/opt-2.7b": "OPT2.7B",
+    "facebook/opt-6.7b": "OPT6.7B",
+    "facebook/opt-13b": "OPT13B",
+    "facebook/opt-30b": "OPT30B",
+    "facebook/opt-66b": "OPT66B",
+    "bert-base-uncased": "BERTBASE",
+    "bert-large-uncased": "BERTLARGE",
+}
 
 def gather_indexes(output, gather_index):
     gather_index = gather_index.view(-1, 1, 1).expand(-1, -1, output.shape[-1])

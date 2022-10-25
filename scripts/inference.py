@@ -1,4 +1,3 @@
-import imp
 import sys
 import os
 # add the realpath of parent directory to the path
@@ -17,7 +16,7 @@ from torch.utils.data import DataLoader, Dataset
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import BasePredictionWriter
 from utils.cli_parse import str_or_none, parse_plm_layer
-from datamodules.configs import PRETRAIN_MODEL_ABBR
+from models.utils import PRETRAIN_MODEL_ABBR
 from datamodules.utils import (
     TEXT_ID_SEQ_FIELD,
     ATTENTION_MASK_FIELD,
