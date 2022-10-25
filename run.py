@@ -80,7 +80,7 @@ if __name__ == "__main__":
         save_top_k=1,
         monitor="val_HR@10",
         mode="max",
-        filename="-{epoch:02d}-{val_HR@10:.2f}",
+        filename="-{epoch:02d}-{val_HR@10:.5f}",
     )
     early_stop_callback = EarlyStopping(monitor="val_HR@10",
                                         mode="max",

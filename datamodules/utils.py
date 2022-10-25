@@ -77,7 +77,7 @@ def seq_leave_one_out_split(input_seqs, targets, pad_id=0):
     masks = np.where(input_seqs != pad_id, True, False)
     last_idx = np.sum(masks, axis=1) - 1
     last_idx = np.expand_dims(last_idx, axis=1)
-    for stage in ["test", "valid", "train"]:
+    for stage in ["test", "val", "train"]:
         input_seqs_dict[stage] = input_seqs.copy()
         targets_dict[stage] = targets.copy()
         if stage != "test":
@@ -87,7 +87,7 @@ def seq_leave_one_out_split(input_seqs, targets, pad_id=0):
             
     return [
         (input_seqs_dict[stage], targets_dict[stage]) 
-        for stage in ["train", "valid", "test"]
+        for stage in ["train", "val", "test"]
         ]
     
 def point_wise_leave_one_out_split(user_ids, item_id_seqs):
@@ -96,11 +96,11 @@ def point_wise_leave_one_out_split(user_ids, item_id_seqs):
     item_ids_dict = {}
     for uid, item_id_seq in zip(user_ids, item_id_seqs):
         item_ids_dict["train"] = item_id_seq[:-2]
-        item_ids_dict["valid"] = item_id_seq[-2:-1]
+        item_ids_dict["val"] = item_id_seq[-2:-1]
         item_ids_dict["test"] = item_id_seq[-1:]
     return [
         (user_ids, item_ids_dict[stage]) 
-        for stage in ["train", "valid", "test"]
+        for stage in ["train", "val", "test"]
         ]
 
 def ratio_split(data, ratios, random_state):
