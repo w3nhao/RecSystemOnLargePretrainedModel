@@ -86,6 +86,7 @@ class DataModuleConfig:
         self.dataset = dataset
         self.plm_name: str = kwargs.pop("plm_name", "facebook/opt-125m")
         self.plm_last_n_unfreeze: int =  kwargs.pop("plm_last_n_unfreeze", 0)
+        self.sampling_n = kwargs.pop("sampling_n", None)
         self.split_type: str = kwargs.pop("split_type", "ratio")
         self.min_item_seq_len: int = kwargs.pop("min_item_seq_len", 5)
         self.max_item_seq_len: Optional[int] =  kwargs.pop("max_item_seq_len", None)
@@ -102,6 +103,9 @@ class DataModuleConfig:
         
         assert self.min_item_seq_len > 0
         assert self.tokenized_len > 0
+
+        if self.sampling_n is not None:
+            assert self.sampling_n >= 1000, "sampling_n must be >= 1000"
         
         if self.max_item_seq_len is not None:
             assert self.max_item_seq_len > 0

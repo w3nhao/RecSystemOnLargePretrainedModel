@@ -7,7 +7,6 @@ from datamodules.utils import (
     tokenize,
     TEXT_ID_SEQ_FIELD,
     ATTENTION_MASK_FIELD,
-    USER_ID_FIELD,
 )
 
 
@@ -193,23 +192,23 @@ class DataPreprocessor:
         user_token_id = {token: idx for idx, token in enumerate(user_id_token)}
         self.lookup_df[self.inter_table][self.uid_field] = new_ids_list + 1
         return user_token_id, user_id_token
-
-    def save_inters(self, save_dir):
+        
+    def save_inters(self, save_dir, suffix=""):
         if self.inter_table in self.processed_df:
+            file_name = f"{self.inter_table}_{suffix}.processed.tsv"
+            file_path = os.path.join(save_dir, file_name)
             self.processed_df[self.inter_table].to_csv(
-                os.path.join(save_dir, f"{self.inter_table}.processed.tsv"),
+                file_path,
                 sep="\t",
                 index=False,
-                encoding="utf-8",
-            )
+                encoding="utf-8")
 
     def save_items(self, save_dir, tokenizer_abbr):
         if self.item_table in self.processed_df:
+            file_name = f"{self.item_table}_{tokenizer_abbr}.processed.tsv"
+            file_path = os.path.join(save_dir, file_name)
             self.processed_df[self.item_table].to_csv(
-                os.path.join(
-                    save_dir,
-                    f"{self.item_table}_{tokenizer_abbr}.processed.tsv"),
+                file_path,
                 sep="\t",
                 index=False,
-                encoding="utf-8",
-            )
+                encoding="utf-8")

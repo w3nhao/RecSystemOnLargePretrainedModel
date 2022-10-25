@@ -32,6 +32,7 @@ class DataModule(LightningDataModule):
         """Add datamodule specific arguments to the parser."""
         parser = parent_parser.add_argument_group("RecDataModule")
         parser.add_argument("--dataset", type=str, default="MIND_small")
+        parser.add_argument("--sampling_n", type=int_or_none, default=None)
         parser.add_argument("--split_type", type=str, default="ratio")
         parser.add_argument("--tokenized_len", type=int, default=30)
         parser.add_argument("--batch_size", type=int, default=64)

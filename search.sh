@@ -44,16 +44,17 @@ PRE_INFERENCE_LAYER_WISE="False"
 INPUT_TYPE="text"
 ARCHITECTURE="sasrec"
 DATASET="MIND_small"
+SAMPLING_N=10000
 PRE_INFERENCE="True"
 UNFREEZE=0
 N_NEG_SAMPLING=1
 CHECK_VAL_EVERY_N_EPOCH=1
 MAX_EPOCHS=150
 EARLY_STOPPING=10
-PRECISION=32
+PRECISION=16
 ACCELERATOR="gpu"
 STRATEGY="none"
-DEVICES="4 5 6 7" 
+DEVICES="0" 
 # 1e-5 7e-5 1e-4 5e-4 1e-3
 # 0.0 0.01 0.1 
 
@@ -113,7 +114,8 @@ do
                         --split_type $SPLIT_TYPE \
                         --check_val_every_n_epoch $CHECK_VAL_EVERY_N_EPOCH  \
                         --architecture $ARCHITECTURE \
-                        --n_neg_sampling $N_NEG_SAMPLING 
+                        --n_neg_sampling $N_NEG_SAMPLING \
+                        --sampling_n $SAMPLING_N
       done
     done
   done
