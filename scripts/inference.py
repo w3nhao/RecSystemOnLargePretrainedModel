@@ -10,13 +10,19 @@ import argparse
 import torch
 import argparse
 import pytorch_lightning as pl
-import numpy as np
+import pandas as pd
 from transformers import BertModel, AutoConfig
 from torch.utils.data import DataLoader, Dataset
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import BasePredictionWriter
 from utils.cli_parse import str_or_none, parse_plm_layer
-from datamodules.utils import PRETRAIN_MODEL_ABBR, InferenceFileProcessor
+from datamodules.utils import (
+    PRETRAIN_MODEL_ABBR,
+    TEXT_ID_SEQ_FIELD,
+    ATTENTION_MASK_FIELD,
+    InferenceFileProcessor,
+    str_fields2ndarray,
+    )
 from models.partial_opt import PartialOPTModel
 
 from transformers import logging
@@ -179,10 +185,13 @@ if __name__ == "__main__":
     
     # load the processed input_ids and attention_mask
     items_path = os.path.join(args.processed_dir, args.processed_items_file)
-    items = np.load(items_path, allow_pickle=True)
-    input_ids = items[0]
-    attention_mask = items[1]
-    n_items = len(input_ids)
+    items = pd.read_csv(items_path, sep="\t", header=0)
+    input_ids, attention_mask = str_fields2ndarray(
+                df=items,
+                fields=[TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD],
+                field_lens=[args.tokenized_len, args.tokenized_len],
+            )
+    n_items = len(items)
     
     # set the dataset
     # load the input item embeddings if needed
