@@ -4,6 +4,7 @@ import subprocess
 import time
 import numpy as np
 from transformers import AutoConfig
+from datamodules.configs import PRETRAIN_MODEL_ABBR
 from utils.pylogger import get_pylogger
 from tqdm import tqdm
 
@@ -12,19 +13,6 @@ ITEM_ID_SEQ_FIELD = "input_seqs"
 TARGET_FIELD = "targets"
 TEXT_ID_SEQ_FIELD = "tokenized_ids"
 ATTENTION_MASK_FIELD = "attention_mask"
-
-PRETRAIN_MODEL_ABBR = {
-    "facebook/opt-125m": "OPT125M",
-    "facebook/opt-350m": "OPT350M",
-    "facebook/opt-1.3b": "OPT1.3B",
-    "facebook/opt-2.7b": "OPT2.7B",
-    "facebook/opt-6.7b": "OPT6.7B",
-    "facebook/opt-13b": "OPT13B",
-    "facebook/opt-30b": "OPT30B",
-    "facebook/opt-66b": "OPT66B",
-    "bert-base-uncased": "BERTBASE",
-    "bert-large-uncased": "BERTLARGE",
-}
 
 log = get_pylogger(__name__)
 
@@ -118,10 +106,12 @@ def ratio_split(data, ratios):
     """ fixed ratio split (train:0.8, valid:0.1, test:0.1) """
     assert sum(ratios) == 1.0
     train_ratio, valid_ratio, test_ratio = ratios
-    train_data = data.sample(frac=train_ratio)
+    train_data = data.sample(
+        frac=train_ratio, random_state=GLOBAL_RANDOM_SEED)
     rest_data = data[~data.index.isin(train_data.index)]
     valid_frac = valid_ratio / (valid_ratio + test_ratio)
-    valid_data = rest_data.sample(frac=valid_frac)
+    valid_data = rest_data.sample(
+        frac=valid_frac, random_state=GLOBAL_RANDOM_SEED)
     test_data = rest_data[~rest_data.index.isin(valid_data.index)]
 
     return train_data, valid_data, test_data

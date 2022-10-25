@@ -1,7 +1,7 @@
 from datetime import datetime
 from pytorch_lightning.strategies import DDPFullyShardedNativeStrategy
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
-from datamodules.utils import PRETRAIN_MODEL_ABBR
+from datamodules.configs import PRETRAIN_MODEL_ABBR
 from datamodules import (
     SeqDataModule,
     PreInferSeqDataModule,
@@ -109,7 +109,7 @@ def add_program_args(args, parent_parser):
     parser = parent_parser.add_argument_group("program")
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--devices", type=int, nargs="+", default=[0])
-    parser.add_argument("--precision", type=int, default=32)
+    parser.add_argument("--precision", type=int, default=16)
     parser.add_argument("--accelerator", type=str, default="gpu")
     parser.add_argument("--check_val_every_n_epoch", type=int, default=1)
     parser.add_argument("--early_stop_patience",

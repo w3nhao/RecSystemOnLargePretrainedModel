@@ -9,7 +9,6 @@ from datamodules.utils import (
     ATTENTION_MASK_FIELD,
 )
 
-
 class DataPreprocessor:
 
     def __init__(

@@ -1,6 +1,20 @@
 from typing import Optional
 from transformers import AutoConfig
 
+PRETRAIN_MODEL_ABBR = {
+    "facebook/opt-125m": "OPT125M",
+    "facebook/opt-350m": "OPT350M",
+    "facebook/opt-1.3b": "OPT1.3B",
+    "facebook/opt-2.7b": "OPT2.7B",
+    "facebook/opt-6.7b": "OPT6.7B",
+    "facebook/opt-13b": "OPT13B",
+    "facebook/opt-30b": "OPT30B",
+    "facebook/opt-66b": "OPT66B",
+    "bert-base-uncased": "BERTBASE",
+    "bert-large-uncased": "BERTLARGE",
+}
+
+
 def get_data_configs(dataset):
     uid_field = "user_id"
     iid_field = "item_id"

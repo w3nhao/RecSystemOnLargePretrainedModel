@@ -1,6 +1,5 @@
 from pytorch_lightning import LightningDataModule
-from datamodules.utils import PRETRAIN_MODEL_ABBR
-from datamodules.configs import DataModuleConfig, get_data_configs
+from datamodules.configs import DataModuleConfig, get_data_configs, PRETRAIN_MODEL_ABBR
 
 from utils.cli_parse import parse_boolean, int_or_none
 from utils.pylogger import get_pylogger
