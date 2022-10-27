@@ -106,8 +106,7 @@ class BERTSeqRec(TextSeqRec):
             # (B * L_sas, L_plm, H_plm)
             sentence_embs = output.last_hidden_state
             # (B * L_sas, H_plm)
-            item_embs = mean_pooling(sentence_embs,
-                                     attention_mask).type_as(sentence_embs)
+            item_embs = mean_pooling(sentence_embs, attention_mask) 
         elif pooling_method == "cls":
             item_embs = output.last_hidden_state[:, 0, :]
         elif pooling_method == "pooler":

@@ -1,9 +1,12 @@
-from hmac import new
 import os
 import torch
 import pandas as pd
 import numpy as np
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+from utils.cli_parse import parse_boolean
+from utils.pylogger import get_pylogger
+from models.utils import mean_pooling, last_pooling
 from datamodules.datamodule import DataModule
 from datamodules.utils import (pre_inference, ratio_split,
                                seq_leave_one_out_split, str_fields2ndarray,
@@ -11,11 +14,17 @@ from datamodules.utils import (pre_inference, ratio_split,
                                TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD,
                                GLOBAL_RANDOM_SEED, InferenceFileProcessor)
 from datamodules.data_preprocessor import DataPreprocessor
-from datamodules.dataset import TextSeqRecDataset, PreInferTextSeqRecDataset
-from datamodules.configs import PreInferSeqDataModuleConfig, SeqDataModuleConfig
+from datamodules.dataset import (
+    TextSeqRecDataset, 
+    PreInferTextSeqRecDataset,
+    AllFreezePreInferTextSeqRecDataset,
+    )
+from datamodules.configs import (
+    AllFreezePreInferSeqDataModuleConfig,
+    PreInferSeqDataModuleConfig,
+    SeqDataModuleConfig
+    )
 
-from utils.cli_parse import parse_boolean
-from utils.pylogger import get_pylogger
 
 log = get_pylogger(__name__)
 
@@ -367,12 +376,6 @@ class PreInferSeqDataModule(SeqDataModule):
         return num_items
 
     def setup(self, stage=None):
-        """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
-
-        This method is called by lightning with both `trainer.fit()` and `trainer.test()`, so be
-        careful not to execute things like random split twice!
-        """
-
         # load and split datasets only if not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
             sampling_n = self.hparams.dm_config.sampling_n
@@ -403,6 +406,7 @@ class PreInferSeqDataModule(SeqDataModule):
                 field_lens=[tokenized_len, tokenized_len])
             
             tokenized_embs = torch.load(self.tokenized_embs_path)
+            attention_mask = torch.tensor(attention_mask, dtype=torch.bool)
             
             # sampling the item embeddings
             if sampling_n is not None:
@@ -480,6 +484,122 @@ class PreInferSeqDataModule(SeqDataModule):
             sampling_n=args.sampling_n,
             plm_name=args.plm_name,
             plm_last_n_unfreeze=args.plm_last_n_unfreeze,
+            pre_inference_batch_size=args.pre_inference_batch_size,
+            pre_inference_precision=args.pre_inference_precision,
+            pre_inference_devices=args.pre_inference_devices,
+            pre_inference_num_workers=args.pre_inference_num_workers,
+            pre_inference_layer_wise=args.pre_inference_layer_wise,
+            min_item_seq_len=args.min_item_seq_len,
+            max_item_seq_len=args.max_item_seq_len,
+            sasrec_seq_len=args.sasrec_seq_len,
+            tokenized_len=args.tokenized_len,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            )
+        return config
+
+
+class AllFreezePreInferSeqDataModule(PreInferSeqDataModule):
+    def __init__(self, dm_config: AllFreezePreInferSeqDataModuleConfig):
+        self.save_hyperparameters(logger=True)
+        super().__init__(dm_config)
+        
+    def prepare_data(self):
+        num_items = super().prepare_data()
+        return num_items
+    
+    def setup(self, stage=None):
+        # load and split datasets only if not loaded already
+        if not self.data_train and not self.data_val and not self.data_test:
+            sampling_n = self.hparams.dm_config.sampling_n
+            if sampling_n is not None:
+                inters_path = self.sampled_inters_path
+                items_path = self.sampled_items_path
+            else:
+                inters_path = self.inters_path
+                items_path = self.items_path
+                
+            inters = pd.read_csv(inters_path, sep="\t", header=0)
+            items = pd.read_csv(items_path, sep="\t", header=0)
+            
+            log.info(f"Number of behaviors: {len(inters)}")
+            log.info(f"Number of items: {len(items)}")
+            
+            # split data
+            stages = ["train", "val", "test"]
+            split_type = self.hparams.dm_config.split_type
+            input_item_id_seqs, target_item_id_seqs = \
+                self._split_processed_inters_df(
+                    inters=inters, split_type=split_type, stages=stages)
+
+            tokenized_len = self.hparams.dm_config.tokenized_len
+            tokenized_ids, attention_mask = str_fields2ndarray(
+                df=items,
+                fields=[TEXT_ID_SEQ_FIELD, ATTENTION_MASK_FIELD],
+                field_lens=[tokenized_len, tokenized_len])
+            
+            
+            tokenized_embs = torch.load(self.tokenized_embs_path)
+            attention_mask = torch.tensor(attention_mask, dtype=torch.bool)
+            
+            # sampling the item embeddings
+            if sampling_n is not None:
+                sampled_iids = pd.read_csv(
+                    self.sampled_iids_path, sep="\t", header=None)
+                sampled_iids = torch.tensor(
+                    sampled_iids[0].values, dtype=torch.long)
+                tokenized_embs = tokenized_embs[sampled_iids]
+            
+            item_embs = self._pooling(tokenized_embs, attention_mask)
+            
+            [data_train, data_val, data_test] = [
+                AllFreezePreInferTextSeqRecDataset(
+                    input_id_seqs=input_item_id_seqs[stage],
+                    target_id_seqs=target_item_id_seqs[stage],
+                    item_embs=item_embs,
+                ) for stage in stages
+            ]
+
+            self.data_train = data_train
+            self.data_val = data_val
+            self.data_test = data_test
+
+            self.num_items = len(items)    
+    
+    def _pooling(self, tokenized_embs, attention_mask):
+        pooling_method = self.hparams.dm_config.pooling_method
+        
+        if pooling_method == "mean":
+            pooling_func = mean_pooling
+        elif pooling_method == "last":
+            pooling_func = last_pooling
+        elif pooling_method == "cls":
+            item_embs = tokenized_embs[:, 0, :]
+            return item_embs
+        else:
+            raise ValueError(f"Unknown pooling method: {pooling_method}")
+        
+        num_items = tokenized_embs.shape[0]
+        emb_dim = tokenized_embs.shape[-1]
+        
+        item_embs = torch.empty((num_items, emb_dim), dtype=torch.float32)
+        log.info(f"Using {pooling_method} pooling method to pool item embeddings...")
+        for i, embs, mask in tqdm(
+            zip(range(num_items), tokenized_embs, attention_mask), total=num_items):
+            item_embs[i] = pooling_func(embs, mask)
+        return item_embs
+    
+    @classmethod
+    def build_datamodule_config(cls, args):
+        """Build configs from arguments."""
+        config = AllFreezePreInferSeqDataModuleConfig(
+            dataset=args.dataset,
+            split_type=args.split_type,
+            sampling_n=args.sampling_n,
+            plm_name=args.plm_name,
+            plm_last_n_unfreeze=args.plm_last_n_unfreeze,
+            pooling_method=args.pooling_method,
             pre_inference_batch_size=args.pre_inference_batch_size,
             pre_inference_precision=args.pre_inference_precision,
             pre_inference_devices=args.pre_inference_devices,

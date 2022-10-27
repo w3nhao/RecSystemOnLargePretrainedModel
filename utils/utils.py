@@ -4,6 +4,7 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
 from datamodules import (
     SeqDataModule,
     PreInferSeqDataModule,
+    AllFreezePreInferSeqDataModule,
     PointWiseDataModule,
 )
 from models import (
@@ -70,7 +71,10 @@ def get_datamodule(args):
             data_module = PointWiseDataModule
         elif args.input_type == 'text':
             if args.pre_inference:
-                raise NotImplementedError
+                if args.plm_last_n_unfreeze == 0:
+                    raise NotImplementedError
+                else:
+                    raise NotImplementedError
             else:
                 data_module = PointWiseDataModule
     elif args.architecture == "sasrec":
@@ -78,7 +82,10 @@ def get_datamodule(args):
             data_module = SeqDataModule
         elif args.input_type == 'text':
             if args.pre_inference:
-                data_module = PreInferSeqDataModule
+                if args.plm_last_n_unfreeze == 0:
+                    data_module = AllFreezePreInferSeqDataModule
+                else:
+                    data_module = PreInferSeqDataModule
             else:
                 data_module = SeqDataModule
     else:

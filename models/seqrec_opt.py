@@ -105,13 +105,9 @@ class OPTSeqRec(TextSeqRec):
         sentence_embs = output.last_hidden_state
         pooling_method = self.hparams.config.pooling_method
         if pooling_method == "mean":  # (B * L_sas, H_plm)
-            item_embs = \
-                mean_pooling(sentence_embs, attention_mask) \
-                    .type_as(sentence_embs)
+            item_embs = mean_pooling(sentence_embs, attention_mask)
         elif pooling_method == "last":  # (B * L_sas, H_plm)
-            item_embs = \
-                last_pooling(sentence_embs, attention_mask) \
-                    .type_as(sentence_embs)
+            item_embs = last_pooling(sentence_embs, attention_mask) 
         return item_embs
 
     def _set_opt_lr(self, lr, layer_decay, weight_decay):
@@ -363,33 +359,30 @@ class PreInferOPTSeqRec(OPTSeqRec):
     def _freeze_plm_layers(self, last_n_unfreeze):
         pass
 
-    def _get_opt_output(self, inputs_hidden_state, attention_mask):
-        if self.opt is None:
-            # (B * L_sas, L_plm, H_plm)
-            sentence_embs = inputs_hidden_state
-        else:
-            output = self.opt(inputs_hidden_state=inputs_hidden_state,
-                              attention_mask=attention_mask)
-            # (B * L_sas, L_plm, H_plm)
-            sentence_embs = output.last_hidden_state
+    def _get_opt_output(self, attention_mask, inputs_hidden_state):
+        output = self.opt(inputs_hidden_state=inputs_hidden_state,
+                            attention_mask=attention_mask)
+        # (B * L_sas, L_plm, H_plm)
+        sentence_embs = output.last_hidden_state
 
         pooling_method = self.hparams.config.pooling_method
         if pooling_method == "mean":  # (B * L_sas, H_plm)
-            item_embs =\
-                mean_pooling(sentence_embs, attention_mask) \
-                    .type_as(sentence_embs)
+            item_embs = mean_pooling(sentence_embs, attention_mask) 
         elif pooling_method == "last":  # (B * L_sas, H_plm)
-            item_embs = \
-                last_pooling(sentence_embs, attention_mask) \
-                    .type_as(sentence_embs)
+            item_embs = last_pooling(sentence_embs, attention_mask)
         return item_embs
 
-    def _feature_extract(self, inputs_hidden_state, attention_mask):
-        embs_shape = inputs_hidden_state.shape
-        inputs_hidden_state = inputs_hidden_state. \
-            view(-1, embs_shape[-2], embs_shape[-1]) # (B * L_sas, L_plm, H_plm)
-        attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-        item_embs = self._get_opt_output(inputs_hidden_state, attention_mask)
+    def _feature_extract(self, 
+        inputs_hidden_state = None, 
+        attention_mask = None,
+        item_embs = None,
+        ):
+        if item_embs is None:
+            embs_shape = inputs_hidden_state.shape
+            inputs_hidden_state = inputs_hidden_state. \
+                view(-1, embs_shape[-2], embs_shape[-1]) # (B * L_sas, L_plm, H_plm)
+            attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
+            item_embs = self._get_opt_output(inputs_hidden_state, attention_mask)
 
         for layer in self.projection:
             item_embs = layer(item_embs)
@@ -399,28 +392,57 @@ class PreInferOPTSeqRec(OPTSeqRec):
         item_embs = item_embs.view(-1, sasrec_seq_len, sasrec_hidden_size)
         return item_embs
 
-    def forward(self, item_seq_mask, inputs_hidden_state, attention_mask):
-        item_embs = self._feature_extract(inputs_hidden_state, attention_mask)
+    def forward(
+        self, 
+        item_seq_mask, 
+        inputs_hidden_state = None, 
+        attention_mask = None,
+        item_embs = None,
+        ):
+        assert inputs_hidden_state is not None or item_embs is not None, \
+            "inputs_hidden_state and item_embs cannot be None at the same time"
+            
+        item_embs = self._feature_extract(
+            inputs_hidden_state, attention_mask, item_embs)
+            
         output = self.sasrec(item_embs, item_seq_mask)  # (B, L_sas, H_sas)
         output = self.classification_head(output)
         return output  # (B, L, N_items)
 
     def training_step(self, batch, batch_idx):
-        target_id_seq, _, item_seq_mask, \
-            inputs_hidden_state, attention_mask = batch
-        # (B, L, N_items)
-        seq_emb = self.forward(item_seq_mask, inputs_hidden_state,
-                               attention_mask)
+        if self.opt is None:
+            # using the AllFreezePreInferSeqDataset
+            target_seq, _, item_seq_mask, item_embs = batch
+            seq_emb = self.forward(item_seq_mask,
+                                   item_embs=item_embs)
+        else:
+            # using the PreInferSeqDataset
+            target_seq, _, item_seq_mask, \
+                inputs_hidden_state, attention_mask = batch
+            # (B, L, N_items)
+            seq_emb = self.forward(item_seq_mask,
+                                   inputs_hidden_state=inputs_hidden_state,
+                                   attention_mask=attention_mask)
+            
         loss = self.loss_fct(seq_emb.reshape(-1, seq_emb.size(-1)),
-                             target_id_seq.reshape(-1))
+                             target_seq.reshape(-1))
         return loss
 
     def _val_test_step(self, batch, batch_idx, stage):
-        target_seq, _, item_seq_mask, \
-            inputs_hidden_state, attention_mask = batch
-        
-        # (B, L, N_items)
-        seq_emb = self.forward(item_seq_mask, inputs_hidden_state, attention_mask)  
+        if self.opt is None:
+            # using the AllFreezePreInferSeqDataset
+            target_seq, _, item_seq_mask, item_embs = batch
+            seq_emb = self.forward(item_seq_mask,
+                                   item_embs=item_embs)
+        else:
+            # using the PreInferSeqDataset
+            target_seq, _, item_seq_mask, \
+                inputs_hidden_state, attention_mask = batch
+            # (B, L, N_items)
+            seq_emb = self.forward(item_seq_mask,
+                                   inputs_hidden_state=inputs_hidden_state,
+                                   attention_mask=attention_mask)
+             
         last_item_idx = torch.sum(item_seq_mask, dim=-1) - 1  # (B)
         seq_last_emb = gather_indexes(seq_emb, last_item_idx)  # (B, N_items)
         last_id = target_seq.gather(1, last_item_idx.view(-1, 1))  # (B, 1)

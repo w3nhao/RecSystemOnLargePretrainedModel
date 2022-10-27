@@ -143,11 +143,21 @@ class PreInferSeqDataModuleConfig(SeqDataModuleConfig):
                 f"If you want to fully fine-tune the PLM, you should set --pre_inference to False."
                 f"If you want to do pre-inference, please set --plm_last_n_unfreeze >= 0."
                 )
-            
+
+
+class AllFreezePreInferSeqDataModuleConfig(PreInferSeqDataModuleConfig):
+    def __init__(
+        self,
+        dataset: str,
+        pooling_method: str = "mean",
+        **kwargs,
+        ):
+        super().__init__(dataset, **kwargs)
+        self.pooling_method = pooling_method
+
 
 class PointWiseDataModuleConfig(DataModuleConfig):
     def __init__(self, dataset: str, **kwargs):
         self.n_neg_sampling: int = kwargs.pop("n_neg_sampling", 1)
         assert self.n_neg_sampling > 0
         super().__init__(dataset, **kwargs)
-        

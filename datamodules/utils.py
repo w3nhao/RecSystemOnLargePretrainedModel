@@ -196,12 +196,12 @@ def pre_inference(
     if file_processor.exists_inference_file():
         embs_file = file_processor.get_inference_file()
         log.info(
-            f"already inferenced {plm_name} for unfreeze last {last_n_unfreeze} layers"
+            f"Already inferenced {plm_name} for unfreeze last {last_n_unfreeze} layers"
         )
         return torch.load(os.path.join(processed_dir, embs_file))
 
     log.info(
-        f"start inferencing {plm_name} for unfreeze last {last_n_unfreeze} layers..."
+        f"Start inferencing {plm_name} for unfreeze last {last_n_unfreeze} layers..."
     )
     
     final_n_freeze = plm_config.num_hidden_layers - last_n_unfreeze

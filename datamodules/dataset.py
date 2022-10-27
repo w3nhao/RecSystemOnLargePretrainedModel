@@ -83,6 +83,27 @@ class PreInferTextSeqRecDataset(IDSeqRecDataset):
             tokenized_embs, attention_mask
 
 
+class AllFreezePreInferTextSeqRecDataset(IDSeqRecDataset):
+  
+    def __init__(
+        self,
+        input_id_seqs,
+        target_id_seqs,
+        item_embs,
+        padding_idx=0,
+    ):
+        super().__init__(input_id_seqs, target_id_seqs, padding_idx)
+        self.item_embs = item_embs
+        
+    def __len__(self):
+        return self._len
+
+    def __getitem__(self, idx):
+        target_id_seq, item_id_seq, item_seq_mask = super().__getitem__(idx)
+        item_emb_seq = self.item_embs[item_id_seq]
+        return target_id_seq, item_id_seq, item_seq_mask, item_emb_seq
+
+
 class IDPointWiseRecDataset(Dataset):
     def __init__(
         self,

@@ -1,2 +1,2 @@
-from datamodules.sequential_datamodule import SeqDataModule, PreInferSeqDataModule
+from datamodules.sequential_datamodule import SeqDataModule, PreInferSeqDataModule, AllFreezePreInferSeqDataModule
 from datamodules.pointwise_datamodule import PointWiseDataModule

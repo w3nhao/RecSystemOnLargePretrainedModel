@@ -22,21 +22,21 @@ def gather_indexes(output, gather_index):
 
 def mean_pooling(embs, mask):
     mask_expanded = mask.unsqueeze(-1).expand_as(embs)
-    sum_embs = (embs * mask_expanded).sum(1)
-    num_mask = torch.clamp(mask_expanded.sum(1), min=1e-9)
+    sum_embs = (embs * mask_expanded).sum(dim=-2)
+    num_mask = torch.clamp(mask_expanded.sum(dim=-2), min=1e-9)
     output = sum_embs / num_mask
-    return output
+    return output.type_as(embs)
 
 
 def last_pooling(embs, mask):
     batch_size = mask.shape[0]
     sentence_len = mask.shape[1]
-    last_embs_idx = mask.sum(dim=1) - 1
+    last_embs_idx = mask.sum(dim=-1) - 1
     cumsum_idx = torch.tensor(sentence_len).expand(batch_size).cumsum(
         0).type_as(last_embs_idx)
     last_embs_idx[1:] += cumsum_idx[:-1]
     output = embs.view(-1, embs.size(-1))[last_embs_idx]
-    return output
+    return output.type_as(embs)
 
 
 def get_plm_configs(plm):

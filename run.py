@@ -51,6 +51,8 @@ if __name__ == "__main__":
     temp_args, _ = argparser.parse_known_args()
     rec_model = get_model(args=temp_args)
     argparser = rec_model.add_model_specific_args(parent_parser=argparser)
+    
+    temp_args, _ = argparser.parse_known_args()
     datamodule = get_datamodule(args=temp_args)
     argparser = datamodule.add_datamodule_specific_args(parent_parser=argparser)
 
@@ -124,6 +126,7 @@ if __name__ == "__main__":
     # ------------------------
     if len(args.devices) == 1:
         trainer.test(datamodule=dm, ckpt_path="best")
+        
     elif len(args.devices) > 1:
         # test on a single accelerator
         ckpt_path = trainer.checkpoint_callback.best_model_path
@@ -135,5 +138,5 @@ if __name__ == "__main__":
                          accelerator="gpu",
                          devices=[args.devices[0]],
                          deterministic=True,
-                         precision=32)
+                         precision=16)
         tester.test(model, ckpt_path=ckpt_path, datamodule=dm)
