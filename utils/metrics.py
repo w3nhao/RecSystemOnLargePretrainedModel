@@ -45,15 +45,16 @@ class RecRetrivalMetric(Metric, ABC):
         self.k = k
 
         self.add_state(f"accumulate_metric",
-                       default=torch.tensor(0.0),
+                       default=torch.tensor(0.0, dtype=torch.double),
                        dist_reduce_fx="sum")
         self.add_state("accumulate_count",
-                       default=torch.tensor(0),
+                       default=torch.tensor(0, dtype=torch.long),
                        dist_reduce_fx="sum")
 
     def update(self, topk_rank, batch_size):
         self.accumulate_count += batch_size
-        self.accumulate_metric += self._metric(topk_rank[topk_rank <= self.k])
+        self.accumulate_metric += \
+            self._metric(topk_rank[topk_rank <= self.k])
 
     def compute(self):
         return self.accumulate_metric / self.accumulate_count

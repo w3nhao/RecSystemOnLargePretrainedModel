@@ -93,6 +93,7 @@ class SeqRec(pl.LightningModule, ABC):
         for topk in topk_list:
             for metric_name in METRIC_LIST:
                 score = self.topk_metric[f"{metric_name}@{topk}"].compute()
+                self.topk_metric[f"{metric_name}@{topk}"].reset()
                 if metric_name in ["HR", "NDCG"] and topk == 10:
                     log_on_progress_bar = True
                 else:
@@ -103,7 +104,7 @@ class SeqRec(pl.LightningModule, ABC):
                          prog_bar=log_on_progress_bar,
                          logger=True,
                          sync_dist=True)
-    
+                
     def validation_epoch_end(self, outputs):
         self._val_test_epoch_end(outputs, "val")
 
