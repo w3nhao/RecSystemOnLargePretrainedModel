@@ -194,7 +194,8 @@ class DataPreprocessor:
         
     def save_inters(self, save_dir, suffix=""):
         if self.inter_table in self.processed_df:
-            file_name = f"{self.inter_table}_{suffix}.processed.tsv"
+            suffix = suffix if suffix == "" else "_" + suffix
+            file_name = f"{self.inter_table}{suffix}.processed.tsv"
             file_path = os.path.join(save_dir, file_name)
             self.processed_df[self.inter_table].to_csv(
                 file_path,

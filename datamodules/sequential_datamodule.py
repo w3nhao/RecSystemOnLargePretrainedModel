@@ -58,17 +58,12 @@ class SeqDataModule(DataModule):
         
         if sampling_n is not None:
             self.resample_dir = os.path.join(
-                self.processed_dir, f"resample_n@{sampling_n}")
+                self.processed_dir, f"seq_resample_n@{sampling_n}")
             
-            sampled_inter_file = \
-                f"{inter_table}_saslen@{sasrec_seq_len}.processed.tsv"
             self.sampled_inters_path = os.path.join(
-                self.resample_dir, sampled_inter_file)
-            
-            sampled_item_file = \
-                f"{item_table}_{self.tokenizer_abbr}.processed.tsv"
+                self.resample_dir, inter_file)
             self.sampled_items_path = os.path.join(
-                self.resample_dir, sampled_item_file)
+                self.resample_dir, item_file)
             
             sampled_iids_file = f"resampled@{sampling_n}_iids.tsv"
             self.sampled_iids_path = os.path.join(
